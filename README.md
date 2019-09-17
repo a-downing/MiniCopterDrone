@@ -22,6 +22,10 @@ ___
 `target <map_col> <map_row> <altitude_in_meters>`
 
 targets a point of the map. For example to target the center of grid A0 50 meters above the terrain:
+
+`sleep <seconds>`
+
+Pause execution for the given number of seconds (interrupts can still be caught)
    
 `target A.5 0.5 50`
 ___
@@ -92,6 +96,20 @@ Triggered when an RF broadcaster stops transmitting on the given frequency
 
 
 #### Examples
+
+Fly to H 7 at an altitude of 100 meters and maximum pitch angle of 20 degrees, land at 5 meters per second, wait for 1 minute, then fly to J13
+
+```
+#droneasm
+startengine
+target H 7 100
+flyto 20
+land 5
+sleep 60
+target J 13 100
+flyto
+land 5
+```
 
 Hover 50 meters above the current position. When RF frequency 5555 is transmitted, fly to the position it was broadcast from.
 ```
