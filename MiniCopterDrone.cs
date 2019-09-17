@@ -43,7 +43,7 @@ namespace Oxide.Plugins
             config = Config.ReadObject<ConfigData>();
         }
 
-        [ConsoleCommand("minicopterdrone.gridtopos")]
+        /*[ConsoleCommand("minicopterdrone.gridtopos")]
         void GridToPos(ConsoleSystem.Arg argument) {
             Vector3 pos;
             bool success = TryMapGridToPosition(argument.Args[0], out pos);
@@ -53,7 +53,7 @@ namespace Oxide.Plugins
             } else {
                 argument.ReplyWith("failed");
             }
-        }
+        }*/
 
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
