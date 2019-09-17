@@ -17,21 +17,23 @@ namespace Oxide.Plugins
     [Info("MiniCopterDrone", "Andrew", "1.0")]
     public class MiniCopterDrone : RustPlugin
     {
-        static Vector3 gridToPosCorrection = new Vector3(0.44f, 0, -74.47f);
         static MiniCopterDrone plugin;
         static ulong andrewId = 76561198872570126;
         static public BasePlayer andrew = null;
         DroneManager droneManager = null;
-        ConfigData config;
+        static ConfigData config;
 
         class ConfigData {
-            [JsonProperty(PropertyName = "test")]
-            public string test;
+            [JsonProperty(PropertyName = "maxProgramLength")]
+            public int maxProgramLength;
+            [JsonProperty(PropertyName = "gridPositionCorrection")]
+            public Vector3 gridPositionCorrection;
         }
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
-                test = "test"
+                maxProgramLength = 1024,
+                gridPositionCorrection = new Vector3(0.44f, 0, -74.47f)
             };
 
             Config.WriteObject(config, true);
@@ -61,10 +63,8 @@ namespace Oxide.Plugins
             var actualPos = argument.Player().transform.position;
             var error = new Vector3(actualPos.x, 0, actualPos.z) - pos;
 
-            gridToPosCorrection = error;
-
             if(success) {
-                argument.ReplyWith($"{error.ToString("0.000")}");
+                argument.ReplyWith($"set gridPositionCorrection to this in the config file x: {error.x}, y: {error.y}, z: {error.z}");
             } else {
                 argument.ReplyWith("failed");
             }
@@ -138,7 +138,7 @@ namespace Oxide.Plugins
 
                 float endTime = Time.realtimeSinceStartup;
                 float elapsedTime = endTime - startTime;
-                //Print($"DroneManager.FixedUpdate time: {elapsedTime.ToString("0.000000")}s");
+                //plugin.SendReply(andrew, $"DroneManager.FixedUpdate time: {elapsedTime.ToString("0.000000")}s");
             }
 
             public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
@@ -519,6 +519,10 @@ namespace Oxide.Plugins
                 }
 
                 if(HasFlag(Flag.EngineOn)) {
+                    //copter.ApplyWheelForce(copter.frontWheel, 1, 0, 1);
+                    //copter.ApplyWheelForce(copter.leftWheel, 1, 0, 0);
+                    //copter.ApplyWheelForce(copter.rightWheel, 1, 0, 0);
+
                     if(HasFlag(Flag.Flying)) {
                         if(HasFlag(Flag.HasTargetAltitude)) {
                             ControlAltitude(desiredAltitude, currentAltitude);
@@ -727,7 +731,7 @@ namespace Oxide.Plugins
                             }
 
                             break;
-                        case "detonate":
+                        /*case "detonate":
                             Effect.server.Run("assets/prefabs/npc/patrol helicopter/effects/rocket_explosion.prefab", storage.transform.position);
                             Effect.server.Run("assets/bundled/prefabs/fx/explosions/explosion_01.prefab", storage.transform.position);
 
@@ -738,7 +742,7 @@ namespace Oxide.Plugins
                                 entity.Hurt(100, Rust.DamageType.Explosion);
                             }
 
-                            break;
+                            break;*/
                         default:
                             isFlightInstruction = false;
                             break;
@@ -842,7 +846,7 @@ namespace Oxide.Plugins
                     result = new Vector3(x, 0, y);
 
                     if(useCorrection) {
-                        result += gridToPosCorrection;
+                        result += config.gridPositionCorrection;
                     }
 
                     return true;
@@ -863,7 +867,7 @@ namespace Oxide.Plugins
             result = new Vector3(x, 0, y);
 
             if(useCorrection) {
-                result += gridToPosCorrection;
+                result += config.gridPositionCorrection;
             }
 
             return true;
