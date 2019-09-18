@@ -14,25 +14,26 @@ using UnityEngine.Events;
 
 namespace Oxide.Plugins
 {
-    [Info("MiniCopterDrone", "Andrew", "1.0")]
+    [Info("MiniCopterDrone", "Andrew", "1.0.0")]
     public class MiniCopterDrone : RustPlugin
     {
         static MiniCopterDrone plugin;
-        static ulong andrewId = 76561198872570126;
-        static public BasePlayer andrew = null;
+        static public BasePlayer debugPlayer = null;
         DroneManager droneManager = null;
         static ConfigData config;
 
         class ConfigData {
-            [JsonProperty(PropertyName = "maxProgramLength")]
-            public int maxProgramLength;
+            [JsonProperty(PropertyName = "maxProgramInstructions")]
+            public int maxProgramInstructions;
             [JsonProperty(PropertyName = "gridPositionCorrection")]
             public Vector3 gridPositionCorrection;
+            [JsonProperty(PropertyName = "debugPlayerId")]
+            public ulong debugPlayerId;
         }
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
-                maxProgramLength = 1024,
+                maxProgramInstructions = 128,
                 gridPositionCorrection = new Vector3(0.44f, 0, -74.47f)
             };
 
@@ -138,7 +139,7 @@ namespace Oxide.Plugins
 
                 float endTime = Time.realtimeSinceStartup;
                 float elapsedTime = endTime - startTime;
-                //plugin.SendReply(andrew, $"DroneManager.FixedUpdate time: {elapsedTime.ToString("0.000000")}s");
+                //plugin.SendReply(debugPlayer, $"DroneManager.FixedUpdate time: {elapsedTime.ToString("0.000000")}s");
             }
 
             public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
@@ -260,7 +261,6 @@ namespace Oxide.Plugins
 
                 if(instr.name == "int") {
                     Interrupt(instr.args[0].stringValue);
-                    HandlePendingInterrupt();
                 }
 
                 if(instr.name == "ret") {
@@ -315,6 +315,9 @@ namespace Oxide.Plugins
 
             public Flag flags;
 
+            List<Vector3> targetStack = new List<Vector3>();
+            List<float> targetAltStack = new List<float>();
+
             bool HasFlag(Flag f) {
                 return (this.flags & f) == f;
             }
@@ -357,6 +360,9 @@ namespace Oxide.Plugins
                     StopEngine();
                     UpdateEngine();
                 }
+
+                targetStack.Clear();
+                targetAltStack.Clear();
                 
                 cpu.Reset();
             }
@@ -371,13 +377,12 @@ namespace Oxide.Plugins
 
             public bool OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
                 if(item.info.shortname == "note" && item.text != null) {
-                    var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n"}, StringSplitOptions.None);
-                    const int maxProgramLength = 1024;
+                    var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n"}, StringSplitOptions.RemoveEmptyEntries);
 
                     if(lines.Length >= 1) {
                         if(lines[0] == "#droneasm") {
                             if(added) {
-                                if(lines.Length < maxProgramLength) {
+                                if(lines.Length < config.maxProgramInstructions) {
                                     Reset();
                                     bool success = compiler.Compile(item.text);
 
@@ -388,7 +393,7 @@ namespace Oxide.Plugins
                                         active = true;
                                     }
                                 } else {
-                                    item.text += "\n" + $"#[error] max program length is {maxProgramLength} bytes";
+                                    item.text += "\n" + $"#[error] max program length is {config.maxProgramInstructions} instructions";
                                 }
                             } else {
                                 Reset();
@@ -410,7 +415,7 @@ namespace Oxide.Plugins
                 Vector3 copterUp = copter.transform.rotation * Vector3.up;
                 Vector3 thrust = copterUp * (copter.engineThrustMax * throttleControl);
 
-                //andrew.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.red, copter.transform.position, copter.transform.position + (thrust / copter.engineThrustMax) * 5, 0.25);
+                //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.red, copter.transform.position, copter.transform.position + (thrust / copter.engineThrustMax) * 5, 0.25);
 
                 copter.rigidBody.AddForce(thrust, ForceMode.Force);
             }
@@ -420,7 +425,7 @@ namespace Oxide.Plugins
                 var pv = copter.transform.rotation * Vector3.up;
                 var control = cyclicController.Update(desired, pv, Time.fixedDeltaTime);
 
-                //andrew.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.green, copter.transform.position, copter.transform.position + control * 4, 0.25);
+                //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.green, copter.transform.position, copter.transform.position + control * 4, 0.25);
 
                 if(control.magnitude > 1e-6f) {
                     copter.rigidBody.AddTorque(control, ForceMode.Acceleration);
@@ -535,7 +540,7 @@ namespace Oxide.Plugins
                             copterUp = HeadingControl(this.target, this.desiredPitch);
                         }
 
-                        //andrew.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.blue, copter.transform.position, copter.transform.position + copterUp * 6, 0.25);
+                        //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.blue, copter.transform.position, copter.transform.position + copterUp * 6, 0.25);
                         CyclicControl(copterUp);
                     }
                 }
@@ -617,14 +622,14 @@ namespace Oxide.Plugins
                     cpu.Interrupt(isrName);
                 }
 
-                if(cpu.HandlePendingInterrupt() && !HasFlag(Flag.ExecutingInstruction)) {
+                if(cpu.HandlePendingInterrupt()) {
                     // will it be a problem restarting the unfinished instruction afterward?
                     // it definitely will affect "sleep"
                     SetFlag(Flag.ExecutingInstruction, false);
                 }
 
                 // some instructions finish immediately, so do them all in one FixedUpdate
-                // jmp, call, int, and ret aren't handled in FixedUpdate, so we can't get stuck in a loop
+                // jmp, call, int, and ret aren't handled in the switch, so we can't get stuck in a loop
                 bool isFlightInstruction = true;
 
                 while(isFlightInstruction && !HasFlag(Flag.ExecutingInstruction)) {
@@ -743,6 +748,44 @@ namespace Oxide.Plugins
                             }
 
                             break;*/
+                        case "pushtarget":
+                            targetStack.Add(this.target);
+                            
+                            if(targetStack.Count > 32) {
+                                Reset();
+                                return;
+                            }
+                            
+                            break;
+                        case "poptarget":                           
+                            if(targetStack.Count == 0) {
+                                Reset();
+                                return;
+                            }
+
+                            this.target = targetStack[targetStack.Count - 1];
+                            targetStack.RemoveAt(targetStack.Count - 1);
+                            
+                            break;
+                        case "pushtargetalt":
+                            targetAltStack.Add(this.desiredAltitude);
+                            
+                            if(targetAltStack.Count > 32) {
+                                Reset();
+                                return;
+                            }
+                            
+                            break;
+                        case "poptargetalt":                           
+                            if(targetAltStack.Count == 0) {
+                                Reset();
+                                return;
+                            }
+
+                            this.desiredAltitude = targetAltStack[targetAltStack.Count - 1];
+                            targetAltStack.RemoveAt(targetAltStack.Count - 1);
+                            
+                            break;
                         default:
                             isFlightInstruction = false;
                             break;
@@ -963,6 +1006,11 @@ namespace Oxide.Plugins
                 {"flythrough", new Param[] { new Param("pitch", Types.Num) }},
                 {"drop", new Param[] { new Param("slot", Types.Num) }},
                 {"detonate", new Param[] {  }},
+
+                {"pushtarget", new Param[] {  }},
+                {"poptarget", new Param[] {  }},
+                {"pushtargetalt", new Param[] {  }},
+                {"poptargetalt", new Param[] {  }},
             };
 
             public bool Compile(string code) {
@@ -1167,22 +1215,20 @@ namespace Oxide.Plugins
 
         void Loaded()
         {
-            Puts("Loaded()");
             plugin = this;
-
             Cleanup();
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
             droneManager.plugin = this;
-
-            andrew = BasePlayer.FindByID(andrewId);
-            
-            if(andrew) {
-                Puts("Found Andrew");
-            }
+            debugPlayer = BasePlayer.FindByID(config.debugPlayerId);
 
             foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
                 StorageContainer storage = null;
+
+                // scraptransportheli dervies from MiniCopter
+                if(miniCopter.ShortPrefabName != "minicopter.entity") {
+                    continue;
+                }
 
                 foreach(var ent in miniCopter.children.ToList()) {
                     if(ent is StorageContainer) {
