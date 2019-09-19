@@ -48,13 +48,12 @@ namespace Oxide.Plugins
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
             Vector3 pos;
-            bool success = TryMapGridToPosition(argument.Args[0], out pos, false);
 
-            var actualPos = argument.Player().transform.position;
-            var error = new Vector3(actualPos.x, 0, actualPos.z) - pos;
-
-            if(success) {
-                argument.ReplyWith($"set gridPositionCorrection to this in the config file x: {error.x}, y: {error.y}, z: {error.z}");
+            if( TryMapGridToPosition(argument.Args[0], out pos, false)) {
+                var actualPos = argument.Player().transform.position;
+                config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
+                Config.WriteObject(config, true);
+                argument.ReplyWith($"gridPositionCorrection: {config.gridPositionCorrection.ToString()}");
             } else {
                 argument.ReplyWith("failed");
             }
