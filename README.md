@@ -1,5 +1,6 @@
 # MiniCopterDrone
 ### A Rust uMod plugin giving the minicopter drone functionality
+**(This guide is not even close to complete)**
 
 To activate the drone drag a note containing instructions into the wooden box (may be invisible) under the tail.
 
