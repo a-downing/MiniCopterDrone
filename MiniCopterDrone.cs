@@ -22,6 +22,7 @@ namespace Oxide.Plugins
         DroneManager droneManager = null;
         static ConfigData config;
         static Compiler compiler = new Compiler();
+        const string calibratePerm = "minicopterdrone.calibrate.allowed";
 
         class ConfigData {
             [JsonProperty(PropertyName = "maxProgramInstructions")]
@@ -47,15 +48,19 @@ namespace Oxide.Plugins
 
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
-            Vector3 pos;
+            if(!permission.UserHasPermission(argument.Player().UserIDString, calibratePerm)) {
+                argument.ReplyWith($"error: you need the {calibratePerm} to use this command");
+                return;
+            }
 
+            Vector3 pos;
             if( TryMapGridToPosition(argument.Args[0], out pos, false)) {
                 var actualPos = argument.Player().transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
                 Config.WriteObject(config, true);
                 argument.ReplyWith($"gridPositionCorrection: {config.gridPositionCorrection.ToString()}");
             } else {
-                argument.ReplyWith("failed");
+                argument.ReplyWith("error: TryMapGridToPosition() failed");
             }
         }
 
@@ -1504,6 +1509,9 @@ namespace Oxide.Plugins
         void Loaded()
         {
             plugin = this;
+
+            permission.RegisterPermission(calibratePerm, this);
+
             Cleanup();
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
