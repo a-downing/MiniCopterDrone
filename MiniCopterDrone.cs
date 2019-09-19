@@ -21,6 +21,7 @@ namespace Oxide.Plugins
         static public BasePlayer debugPlayer = null;
         DroneManager droneManager = null;
         static ConfigData config;
+        static Compiler compiler = new Compiler();
 
         class ConfigData {
             [JsonProperty(PropertyName = "maxProgramInstructions")]
@@ -43,18 +44,6 @@ namespace Oxide.Plugins
         void Init() {
             config = Config.ReadObject<ConfigData>();
         }
-
-        /*[ConsoleCommand("minicopterdrone.gridtopos")]
-        void GridToPos(ConsoleSystem.Arg argument) {
-            Vector3 pos;
-            bool success = TryMapGridToPosition(argument.Args[0], out pos);
-
-            if(success) {
-                argument.ReplyWith($"{pos.x.ToString("0.000")}, {pos.z.ToString("0.000")}");
-            } else {
-                argument.ReplyWith("failed");
-            }
-        }*/
 
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
@@ -84,22 +73,7 @@ namespace Oxide.Plugins
             public static HashSet<int> risingEdgeFrequencies = new HashSet<int>();
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
 
-            Dictionary<Action, float> delayedActions = new Dictionary<Action, float>();
-
-            public void DoAction(Action action, float fixedTime) {
-                delayedActions.Add(action, fixedTime);
-            }
-
             void FixedUpdate() {
-                float startTime = Time.realtimeSinceStartup;
-
-                foreach(var action in delayedActions.ToArray()) {
-                    if(Time.fixedTime > action.Value) {
-                        action.Key();
-                        delayedActions.Remove(action.Key);
-                    }
-                }
-
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
 
@@ -136,15 +110,9 @@ namespace Oxide.Plugins
 
                     drone.FixedUpdate();
                 }
-
-                float endTime = Time.realtimeSinceStartup;
-                float elapsedTime = endTime - startTime;
-                //plugin.SendReply(debugPlayer, $"DroneManager.FixedUpdate time: {elapsedTime.ToString("0.000000")}s");
             }
 
             public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
-                Print($"added: {added} {item.info.shortname}");
-
                 Drone drone = null;
 
                 if(!drones.TryGetValue(miniCopter.GetInstanceID(), out drone)){
@@ -156,7 +124,6 @@ namespace Oxide.Plugins
                     drone.manager = this;
 
                     drones.Add(miniCopter.GetInstanceID(), drone);
-                    Print($"Added drone #{drone.instanceId}");
                 }
 
                 drone.OnItemAddedOrRemoved(storage, item, added);
@@ -172,23 +139,29 @@ namespace Oxide.Plugins
         }
 
         class DroneCPU {
-            List<Compiler.Instruction> instructions = null;
-            public Dictionary<string, int> isrs = null;
-            public Queue<string> interrupts;
-            public List<int> picStack;
+            List<Compiler.Instruction> instructions = new List<Compiler.Instruction>();
+            public Dictionary<string, int> isrs = new Dictionary<string, int>();
+            public Queue<string> interrupts = new Queue<string>();
+            public List<int> picStack = new List<int>();
             int pic = 0;
+            bool abort = false;
+            string abortReason = null;
+
+            Dictionary<string, Compiler.Instruction> numVariables = new Dictionary<string, Compiler.Instruction>();
 
             public void Reset() {
                 pic = 0;
-                interrupts = new Queue<string>();
-                picStack = new List<int>();
+                interrupts.Clear();
+                picStack.Clear();
+                numVariables.Clear();
             }
 
             public void LoadInstructions(List<Compiler.Instruction> instructions) {
                 this.instructions = instructions;
-                isrs = new Dictionary<string, int>();
-                interrupts = new Queue<string>();
-                picStack = new List<int>();
+                isrs.Clear();
+                interrupts.Clear();
+                picStack.Clear();
+                numVariables.Clear();
                 pic = 0;
 
                 for(int i = 0; i < instructions.Count; i++) {
@@ -196,7 +169,26 @@ namespace Oxide.Plugins
 
                     if(instr.name == "isr") {
                         isrs.Add(instr.args[0].stringValue, i);
+                    } else if(instr.name == "num") {
+                        numVariables.Add(instr.args[0].stringValue, instr);
                     }
+                }
+
+                for(int i = 0; i < 8; i++) {
+                    var instruction = new Compiler.Instruction("r" + i);
+
+                    instruction.args.Add(new Compiler.Instruction.Argument {
+                        name = null,
+                        paramType = Compiler.ParamType.NumVariable,
+                        argType = Compiler.ParamType.NumVariable,
+                        rawValue = null,
+                        addressValue = 0,
+                        floatValue = 0,
+                        intValue = 0,
+                        stringValue = null
+                    });
+
+                    numVariables.Add(instruction.name, instruction);
                 }
             }
 
@@ -226,6 +218,17 @@ namespace Oxide.Plugins
                 }
             }
 
+            public bool WriteVariable(string name, float value) {
+                Compiler.Instruction instr;
+                if(numVariables.TryGetValue(name, out instr)) {
+                    instr.args[0].floatValue = value;
+                    instr.args[0].intValue = (int)value;
+                    return true;
+                }
+
+                return false;
+            }
+
             public bool HandlePendingInterrupt() {
                 if(interrupts.Count == 0) {
                     return false;
@@ -239,16 +242,43 @@ namespace Oxide.Plugins
                 return true;
             }
 
-            public bool Cycle(out Compiler.Instruction instr) {
+            public void Abort(string reason) {
+                abort = true;
+                abortReason = reason;
+            }
+
+            public bool Cycle(out Compiler.Instruction instr, out string failReason) {
                 if(instructions == null || pic < 0 || pic >= instructions.Count) {
                     instr = null;
+                    failReason = "out of instructions";
+                    return false;
+                }
+
+                if(abort) {
+                    instr = null;
+                    failReason = abortReason;
                     return false;
                 }
 
                 instr = instructions[pic++];
 
-                if(instr.name == "label" || instr.name == "isr") {
-                    return Cycle(out instr);
+                for(int i = 0; i < instr.args.Count; i++) {
+                    var arg = instr.args[i];
+
+                    if(arg.argType == Compiler.ParamType.NumVariable) {
+                        Compiler.Instruction value;
+                        if(numVariables.TryGetValue(arg.stringValue, out value)) {
+                            arg.floatValue = value.args[0].floatValue;
+                            arg.intValue = value.args[0].intValue;
+                        } else {
+                            failReason = $"couldn't find variable \"{arg.stringValue}\"";
+                            return false;
+                        }
+                    }
+                }
+
+                if(instr.name == "label" || instr.name == "isr" || instr.name == "var") {
+                    return Cycle(out instr, out failReason);
                 }
 
                 if(instr.name == "jmp") {
@@ -265,10 +295,110 @@ namespace Oxide.Plugins
 
                 if(instr.name == "ret") {
                     if(!Ret()) {
+                        failReason = "no address to return from";
                         return false;
                     }
                 }
 
+                if(
+                    instr.name == "mov"
+                    || instr.name == "add"
+                    || instr.name == "sub"
+                    || instr.name == "mul"
+                    || instr.name == "div"
+                    || instr.name == "abs"
+                    || instr.name == "sqrt"
+                    || instr.name == "pow"
+                    ) {
+                    Compiler.Instruction variable;
+                    if(!this.numVariables.TryGetValue(instr.args[0].stringValue, out variable)) {
+                        failReason = $"couldn't find variable \"{instr.args[0].stringValue}\"";
+                        return false;
+                    }
+
+                    var variableArg = variable.args[0];
+                    var valueArg = instr.args[1];
+                    
+                    try {
+                        switch(instr.name) {
+                            case "mov":
+                                variableArg.floatValue = valueArg.floatValue;
+                                break;
+                            case "add":
+                                variableArg.floatValue += valueArg.floatValue;
+                                break;
+                            case "sub":
+                                variableArg.floatValue -= valueArg.floatValue;
+                                break;
+                            case "mul":
+                                variableArg.floatValue *= valueArg.floatValue;
+                                break;
+                            case "div":
+                                variableArg.floatValue /= valueArg.floatValue;
+                                break;
+                            case "abs":
+                                variableArg.floatValue = Mathf.Abs(valueArg.floatValue);
+                                break;
+                            case "sqrt":
+                                variableArg.floatValue = Mathf.Sqrt(valueArg.floatValue);
+                                break;
+                            case "pow":
+                                variableArg.floatValue = Mathf.Pow(variableArg.floatValue, valueArg.floatValue);
+                                break;
+                        }
+
+                        if(!float.IsFinite(variableArg.floatValue)) {
+                            failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {variableArg.floatValue}";
+                            return false;
+                        }
+                    } catch(Exception e) {
+                        failReason = e.ToString();
+                        return false;
+                    }
+
+                    variableArg.intValue = (int)variableArg.floatValue;
+                }
+
+                if(
+                    instr.name == "je"
+                    || instr.name == "jne"
+                    || instr.name == "jg"
+                    || instr.name == "jge"
+                    || instr.name == "jl"
+                    || instr.name == "jle"
+                    ) {
+                    float lhs = instr.args[0].floatValue;
+                    float rhs = instr.args[1].floatValue;
+                    int addr = instr.args[2].addressValue;
+                    bool jump = false;
+
+                    switch(instr.name) {
+                        case "je":
+                            jump = lhs == rhs;
+                            break;
+                        case "jne":
+                            jump = lhs != rhs;
+                            break;
+                        case "jg":
+                            jump = lhs > rhs;
+                            break;
+                        case "jge":
+                            jump = lhs >= rhs;
+                            break;
+                        case "jl":
+                            jump = lhs < rhs;
+                            break;
+                        case "jle":
+                            jump = lhs <= rhs;
+                            break;
+                    }
+
+                    if(jump) {
+                        Jump(addr);
+                    }
+                }
+
+                failReason = null;
                 return true;
             }
         }
@@ -277,7 +407,6 @@ namespace Oxide.Plugins
             public DroneManager manager;
             public EntityRef miniCopterRef;
             public int instanceId;
-            Compiler compiler = new Compiler();
             DroneCPU cpu = new DroneCPU();
             public StorageContainer storage = null;
 
@@ -311,6 +440,9 @@ namespace Oxide.Plugins
                 Flying = 1 << 4,
                 ExecutingInstruction = 1 << 5,
                 Landing = 1 << 6,
+                SeekingTarget = 1 << 7,
+                SeekingTargetFlythrough = 1 << 8,
+                SeekingTargetAltitude = 1 << 9
             }
 
             public Flag flags;
@@ -339,6 +471,7 @@ namespace Oxide.Plugins
             float sleepTime = -1;
             float engineStartTime = -1;
             float landingSpeed = 0;
+            float landingTime;
             float desiredPitch = 0;
 
             public void Reset() {
@@ -415,8 +548,6 @@ namespace Oxide.Plugins
                 Vector3 copterUp = copter.transform.rotation * Vector3.up;
                 Vector3 thrust = copterUp * (copter.engineThrustMax * throttleControl);
 
-                //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.red, copter.transform.position, copter.transform.position + (thrust / copter.engineThrustMax) * 5, 0.25);
-
                 copter.rigidBody.AddForce(thrust, ForceMode.Force);
             }
 
@@ -424,8 +555,6 @@ namespace Oxide.Plugins
                 var copter = miniCopterRef.Get(true) as MiniCopter;
                 var pv = copter.transform.rotation * Vector3.up;
                 var control = cyclicController.Update(desired, pv, Time.fixedDeltaTime);
-
-                //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.green, copter.transform.position, copter.transform.position + control * 4, 0.25);
 
                 if(control.magnitude > 1e-6f) {
                     copter.rigidBody.AddTorque(control, ForceMode.Acceleration);
@@ -520,14 +649,12 @@ namespace Oxide.Plugins
                 var currentAltitude = GetAltitude(copter.transform.position);
 
                 if(HasFlag(Flag.Landing)) {
-                    this.desiredAltitude -= this.landingSpeed * Time.fixedDeltaTime;
+                    this.desiredAltitude = Mathf.Max(0, this.desiredAltitude - (this.landingSpeed * Time.fixedDeltaTime));
                 }
 
-                if(HasFlag(Flag.EngineOn)) {
-                    //copter.ApplyWheelForce(copter.frontWheel, 1, 0, 1);
-                    //copter.ApplyWheelForce(copter.leftWheel, 1, 0, 0);
-                    //copter.ApplyWheelForce(copter.rightWheel, 1, 0, 0);
+                this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
 
+                if(HasFlag(Flag.EngineOn)) {
                     if(HasFlag(Flag.Flying)) {
                         if(HasFlag(Flag.HasTargetAltitude)) {
                             ControlAltitude(desiredAltitude, currentAltitude);
@@ -536,11 +663,9 @@ namespace Oxide.Plugins
                         Vector3 copterUp = Vector3.up;
 
                         if(HasFlag(Flag.HasTarget)) {
-                            this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
                             copterUp = HeadingControl(this.target, this.desiredPitch);
                         }
 
-                        //debugPlayer.SendConsoleCommand("ddraw.arrow", Time.fixedDeltaTime, Color.blue, copter.transform.position, copter.transform.position + copterUp * 6, 0.25);
                         CyclicControl(copterUp);
                     }
                 }
@@ -590,24 +715,30 @@ namespace Oxide.Plugins
                 UpdateEngine();
                 TailFinTorque();
 
-                /*var flagValues = Enum.GetValues(typeof(Flag));
-                var flagNames = Enum.GetNames(typeof(Flag));
-                var setFlags = new List<string>();
-
-                for(int i = 0; i < flagValues.Length; i++) {
-                    var val = (Flag)flagValues.GetValue(i);
-
-                    if(HasFlag(val)) {
-                        setFlags.Add(flagNames[i]);
-                    }
-                }*/
-
                 if(!active) {
                     StopEngine();
                     return;
                 }
 
                 Fly();
+
+                /*if(this.currentInstruction != null) {
+                    var flagValues = Enum.GetValues(typeof(Flag));
+                    var flagNames = Enum.GetNames(typeof(Flag));
+                    var setFlags = new List<string>();
+
+                    for(int i = 0; i < flagValues.Length; i++) {
+                        var val = (Flag)flagValues.GetValue(i);
+                        if(HasFlag(val)) {
+                            setFlags.Add(flagNames[i]);
+                        }
+                    }
+
+                    plugin.SendReply(debugPlayer, $"{this.currentInstruction.name} {String.Join(", ", setFlags)}");
+                    plugin.SendReply(debugPlayer, $"this.target: {this.target}");
+                    plugin.SendReply(debugPlayer, $"this.desiredAltitude: {this.desiredAltitude}");
+                    plugin.SendReply(debugPlayer, $"this.desiredPitch: {this.desiredPitch}");
+                }*/
 
                 var currentAltitude = GetAltitude(copter.transform.position);
                 var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
@@ -622,6 +753,70 @@ namespace Oxide.Plugins
                     cpu.Interrupt(isrName);
                 }
 
+                if(HasFlag(Flag.Landing)) {
+                    if(currentAltitude < 2 || (Time.fixedTime - this.landingTime > 5.0f && copter.rigidBody.velocity.magnitude < 0.1f)) {
+                        SetFlag(Flag.Landing, false);
+                        SetFlag(Flag.Flying, false);
+                        cpu.Interrupt("landed");
+
+                        if(this.currentInstruction.name == "land") {
+                            SetFlag(Flag.ExecutingInstruction, false);
+                        }
+                    }
+                }
+
+                if(HasFlag(Flag.HasTarget) && HasFlag(Flag.SeekingTarget)) {
+                    Vector3 offset = this.target - copter.transform.position;
+
+                    if(offset.magnitude < 1 && copter.rigidBody.velocity.magnitude < 1) {
+                        SetFlag(Flag.SeekingTarget, false);
+                        cpu.Interrupt("at_target");
+
+                        if(this.currentInstruction.name == "flyto") {
+                            SetFlag(Flag.ExecutingInstruction, false);
+                        }
+                    }
+                }
+
+                if(HasFlag(Flag.HasTarget) && HasFlag(Flag.SeekingTargetFlythrough)) {
+                    Vector3 offset = this.target - copter.transform.position;
+
+                    if(offset.magnitude < 10.0f) {
+                        SetFlag(Flag.SeekingTargetFlythrough, false);
+                        cpu.Interrupt("almost_at_target");
+
+                        if(this.currentInstruction.name == "flythrough") {
+                            SetFlag(Flag.ExecutingInstruction, false);
+                        }
+                    }
+                }
+
+                if(HasFlag(Flag.HasTargetAltitude) && HasFlag(Flag.SeekingTargetAltitude)) {
+                    if(Mathf.Abs(currentAltitude - this.desiredAltitude) < 1 && copter.rigidBody.velocity.magnitude < 1) {
+                        SetFlag(Flag.SeekingTargetAltitude, false);
+                        cpu.Interrupt("at_altitude");
+                    }
+                }
+
+                // this checks if the executing instruction has finished
+                if(this.currentInstruction != null) {
+                    switch(this.currentInstruction.name) {
+                        case "sleep":
+                            if(Time.fixedTime > this.sleepTime) {
+                                this.sleepTime = -1;
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
+                        case "startengine":
+                            if(HasFlag(Flag.EngineOn)) {
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
+                    }
+                }
+
                 if(cpu.HandlePendingInterrupt()) {
                     // will it be a problem restarting the unfinished instruction afterward?
                     // it definitely will affect "sleep"
@@ -632,8 +827,12 @@ namespace Oxide.Plugins
                 // jmp, call, int, and ret aren't handled in the switch, so we can't get stuck in a loop
                 bool isFlightInstruction = true;
 
+                string failReason;
                 while(isFlightInstruction && !HasFlag(Flag.ExecutingInstruction)) {
-                    if(!cpu.Cycle(out this.currentInstruction)) {
+                    // these need to stay synced
+                    this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
+
+                    if(!cpu.Cycle(out this.currentInstruction, out failReason)) {
                         Reset();
                         return;
                     }
@@ -642,8 +841,6 @@ namespace Oxide.Plugins
                         case "sleep":
                             var seconds = currentInstruction.args[0].floatValue;
                             
-                            // this is to pick up from where we left off after an interrupt
-                            // not sure if this is the ideal behavior
                             if(this.sleepTime == -1) {
                                 this.sleepTime = Time.fixedTime + seconds;
                             }
@@ -669,7 +866,6 @@ namespace Oxide.Plugins
                             if(TryMapGridToPosition(mapCol, mapRow, out pos1)) {
                                 this.target = pos1;
                                 this.desiredAltitude = desiredAltitude;
-                                this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
                                 SetFlag(Flag.HasTarget, true);
                                 SetFlag(Flag.HasTargetAltitude, true);
                                 ResetControl();
@@ -700,13 +896,13 @@ namespace Oxide.Plugins
                             SetFlag(Flag.HasTarget, true);
                             SetFlag(Flag.HasTargetAltitude, true);
                             ResetControl();
-                            
                             break;
                         case "land":
                             var speed = currentInstruction.args[0].floatValue;
 
                             if(HasFlag(Flag.Flying)) {
                                 this.landingSpeed = speed;
+                                this.landingTime = Time.fixedTime;
                                 SetFlag(Flag.Landing, true);
                                 SetFlag(Flag.ExecutingInstruction, true);
                             }
@@ -714,12 +910,17 @@ namespace Oxide.Plugins
                             break;
                         case "flyto":
                         case "flythrough":
-                            var desiredPitch = currentInstruction.args[0].floatValue;
-
                             if(HasFlag(Flag.HasTarget) || HasFlag(Flag.HasTargetAltitude)) {
                                 SetFlag(Flag.Flying, true);
                                 SetFlag(Flag.ExecutingInstruction, true);
-                                this.desiredPitch = desiredPitch;
+
+                                if(HasFlag(Flag.HasTarget)) {
+                                    SetFlag(Flag.SeekingTarget, true);
+                                }
+
+                                if(HasFlag(Flag.HasTargetAltitude)) {
+                                    SetFlag(Flag.SeekingTargetAltitude, false);
+                                }
                             }
 
                             break;
@@ -736,18 +937,6 @@ namespace Oxide.Plugins
                             }
 
                             break;
-                        /*case "detonate":
-                            Effect.server.Run("assets/prefabs/npc/patrol helicopter/effects/rocket_explosion.prefab", storage.transform.position);
-                            Effect.server.Run("assets/bundled/prefabs/fx/explosions/explosion_01.prefab", storage.transform.position);
-
-                            var entities = new List<BaseCombatEntity>();
-                            Vis.Entities(storage.transform.position, 5, entities);
-                            
-                            foreach (var entity in entities) {
-                                entity.Hurt(100, Rust.DamageType.Explosion);
-                            }
-
-                            break;*/
                         case "pushtarget":
                             targetStack.Add(this.target);
                             
@@ -765,6 +954,7 @@ namespace Oxide.Plugins
 
                             this.target = targetStack[targetStack.Count - 1];
                             targetStack.RemoveAt(targetStack.Count - 1);
+                            ResetControl();
                             
                             break;
                         case "pushtargetalt":
@@ -784,73 +974,114 @@ namespace Oxide.Plugins
 
                             this.desiredAltitude = targetAltStack[targetAltStack.Count - 1];
                             targetAltStack.RemoveAt(targetAltStack.Count - 1);
+                            ResetControl();
                             
+                            break;
+                        case "gettarget":
+                            var stackPos = this.currentInstruction.args[0].intValue;
+                            var xVar = this.currentInstruction.args[1].stringValue;
+                            var yVar = this.currentInstruction.args[2].stringValue;
+                            var zVar = this.currentInstruction.args[3].stringValue;
+                            Vector3 targetToUse = Vector3.zero;
+
+                            if(stackPos == -1) {
+                                targetToUse = this.target;
+                            } else {
+                                if(this.targetStack.Count >= stackPos + 1) {
+                                    targetToUse = this.targetStack[stackPos];
+                                }
+                            }
+
+                            cpu.WriteVariable(xVar, targetToUse.x);
+                            cpu.WriteVariable(yVar, targetToUse.y);
+                            cpu.WriteVariable(zVar, targetToUse.z);
+                            break;
+                        case "getalt":
+                            var stackPos2 = this.currentInstruction.args[0].intValue;
+                            var altVar = this.currentInstruction.args[1].stringValue;
+                            float altToUse = 0;
+
+                            if(stackPos2 == -1) {
+                                altToUse = this.desiredAltitude;
+                            } else {
+                                if(this.targetAltStack.Count >= stackPos2 + 1) {
+                                    altToUse = this.targetAltStack[stackPos2];
+                                }
+                            }
+
+                            cpu.WriteVariable(altVar, altToUse);
+                            break;
+                        case "settarget":
+                            var stackPos3 = this.currentInstruction.args[0].intValue;
+                            var xVal = this.currentInstruction.args[1].floatValue;
+                            var yVal = this.currentInstruction.args[2].floatValue;
+                            var zVal = this.currentInstruction.args[3].floatValue;
+
+                            if(stackPos3 == -1) {
+                                this.target = new Vector3(xVal, yVal, zVal);
+                                this.desiredAltitude = this.target.y - GetTerrainHeight(this.target);
+                                SetFlag(Flag.HasTarget, true);
+                                SetFlag(Flag.HasTargetAltitude, true);
+                                ResetControl();
+                            } else {
+                                if(this.targetStack.Count >= stackPos3 + 1) {
+                                    this.targetStack[stackPos3] = new Vector3(xVal, yVal, zVal);
+                                    this.desiredAltitude = this.target.y - GetTerrainHeight(this.target);
+                                    SetFlag(Flag.HasTarget, true);
+                                    SetFlag(Flag.HasTargetAltitude, true);
+                                    ResetControl();
+                                }
+                            }
+
+                            break;
+                        case "setalt":
+                            var stackPos4 = this.currentInstruction.args[0].intValue;
+                            float altVal = this.currentInstruction.args[1].floatValue;
+
+                            if(stackPos4 == -1) {
+                                this.desiredAltitude = altVal;
+                                SetFlag(Flag.HasTargetAltitude, true);
+                                ResetControl();
+                            } else {
+                                if(this.targetAltStack.Count >= stackPos4 + 1) {
+                                    this.targetAltStack[stackPos4] = altVal;
+                                    SetFlag(Flag.HasTargetAltitude, true);
+                                    ResetControl();
+                                }
+                            }
+
+                            break;
+                        case "setpitch":
+                            this.desiredPitch = this.currentInstruction.args[0].floatValue;
+                            break;
+                        case "fly":
+                            if(HasFlag(Flag.HasTarget) || HasFlag(Flag.HasTargetAltitude)) {
+                                SetFlag(Flag.Flying, true);
+
+                                if(HasFlag(Flag.HasTarget)) {
+                                    SetFlag(Flag.SeekingTarget, true);
+                                }
+
+                                if(HasFlag(Flag.HasTargetAltitude)) {
+                                    SetFlag(Flag.SeekingTargetAltitude, false);
+                                }
+                            }
+
+                            break;
+                        case "descend":
+                            var speed2 = currentInstruction.args[0].floatValue;
+
+                            if(HasFlag(Flag.Flying)) {
+                                this.landingSpeed = speed2;
+                                this.landingTime = Time.fixedTime;
+                                SetFlag(Flag.Landing, true);
+                            }
+
                             break;
                         default:
                             isFlightInstruction = false;
                             break;
                     }
-                }
-
-                if(!HasFlag(Flag.ExecutingInstruction)) {
-                    return;
-                }
-
-                // this checks if the executing instruction has finished
-                switch(this.currentInstruction.name) {
-                    case "sleep":
-                        if(Time.fixedTime > this.sleepTime) {
-                            this.sleepTime = -1;
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
-
-                        break;
-                    case "startengine":
-                        if(HasFlag(Flag.EngineOn)) {
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
-
-                        break;
-                    case "land":
-                        if(currentAltitude < 2) {
-                            SetFlag(Flag.Landing, false);
-                            SetFlag(Flag.Flying, false);
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
-
-                        break;
-                    case "flyto":
-                        if(HasFlag(Flag.HasTarget)) {
-                            Vector3 offset = this.target - copter.transform.position;
-
-                            if(offset.magnitude < 1 && copter.rigidBody.velocity.magnitude < 1) {
-                                SetFlag(Flag.ExecutingInstruction, false);
-                            }
-                        }
-
-                        if(!HasFlag(Flag.HasTarget)) {
-                            if(Mathf.Abs(currentAltitude - this.desiredAltitude) < 1) {
-                                SetFlag(Flag.ExecutingInstruction, false);
-                            }
-                        }
-
-                        break;
-                    case "flythrough":
-                        if(HasFlag(Flag.HasTarget)) {
-                            Vector3 offset = this.target - copter.transform.position;
-
-                            if(offset.magnitude < 10) {
-                                SetFlag(Flag.ExecutingInstruction, false);
-                            }
-                        }
-
-                        if(!HasFlag(Flag.HasTarget)) {
-                            if(Mathf.Abs(currentAltitude - this.desiredAltitude) < 1) {
-                                SetFlag(Flag.ExecutingInstruction, false);
-                            }
-                        }
-
-                        break;
                 }
             }
         }
@@ -929,32 +1160,31 @@ namespace Oxide.Plugins
             
             foreach(var gameObject in GameObject.FindObjectsOfType<MonoBehaviour>()) {
                 if(gameObject.name == DroneManager.Guid) {
-                    Puts($"destroying {gameObject.name}");
                     GameObject.Destroy(gameObject);
                     break;
                 }
             }
 
             float timeAfter = Time.realtimeSinceStartup;
-            Puts($"Cleanup() elapsed time: {timeAfter - time}");
         }
 
         class Compiler {
             List<string[]> tokens = new List<string[]>();
-            public List<string> errors;
+            public List<string> errors = new List<string>();
             public List<Instruction> instructions = new List<Instruction>();
 
-            public enum Types {
+            public enum ParamType {
                 Num,
-                CharNum,
                 Identifier,
-                Address
+                Address,
+                NumVariable
             }
 
             public class Instruction {
                 public class Argument {
                     public string name;
-                    public Types type;
+                    public ParamType paramType;
+                    public ParamType argType;
                     public string rawValue;
                     public int addressValue;
                     public int intValue;
@@ -971,53 +1201,80 @@ namespace Oxide.Plugins
                 }
 
                 public override string ToString() {
-                    return $"{name} {String.Join(" ", args.Select(x => x.rawValue))}";
+                    return $"{name} {String.Join(" ", args.Select(x => $"<{x.name}:{x.paramType}>"))}";
                 }
             }
 
             struct Param {
-                public Types type;
+                public ParamType type;
                 public string name;
 
-                public Param(string name, Types type) {
+                public Param(string name, ParamType type) {
                     this.name = name;
                     this.type = type;
                 }
             }
 
+            class Variable {
+                public string name;
+                public ParamType type;
+            }
+
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
-                {"label", new Param[] { new Param("name", Types.Identifier) }},
-                {"isr", new Param[] { new Param("name", Types.Identifier) }},
-                {"jmp", new Param[] { new Param("label_name", Types.Address) }},
-                {"call", new Param[] { new Param("label_name", Types.Address) }},
-                {"int", new Param[] { new Param("isr_name", Types.Identifier) }},
+                {"label", new Param[] { new Param("name", ParamType.Identifier) }},
+                {"isr", new Param[] { new Param("name", ParamType.Identifier) }},
+                {"jmp", new Param[] { new Param("label_name", ParamType.Address) }},
+                {"call", new Param[] { new Param("label_name", ParamType.Address) }},
+                {"int", new Param[] { new Param("isr_name", ParamType.Identifier) }},
                 {"ret", new Param[] {  }},
                 {"nop", new Param[] {  }},
 
+                {"num", new Param[] { new Param("name", ParamType.Identifier) }},
+
+                {"mov", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"add", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"sub", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"mul", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"div", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"abs", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"sqrt", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"pow", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+
+                {"je", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jne", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jg", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jge", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jl", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jle", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+
                 {"startengine", new Param[] {  }},
                 {"stopengine", new Param[] {  }},
-                {"land", new Param[] { new Param("speed", Types.Num) }},
-                {"sleep", new Param[] { new Param("seconds", Types.Num) }},
-                {"target", new Param[] { new Param("grid_col", Types.CharNum), new Param("grid_row", Types.Num), new Param("altitude", Types.Num) }},
-                {"targetalt", new Param[] { new Param("altitude", Types.Num) }},
+                {"land", new Param[] { new Param("speed", ParamType.Num) }},
+                {"sleep", new Param[] { new Param("seconds", ParamType.Num) }},
+                {"target", new Param[] { new Param("grid_col", ParamType.Num), new Param("grid_row", ParamType.Num), new Param("altitude", ParamType.Num) }},
+                {"targetalt", new Param[] { new Param("altitude", ParamType.Num) }},
                 {"targethere", new Param[] {  }},
-                {"targetrf", new Param[] { new Param("frequency", Types.Num) }},
-                {"flyto", new Param[] { new Param("pitch", Types.Num) }},
-                {"flythrough", new Param[] { new Param("pitch", Types.Num) }},
-                {"drop", new Param[] { new Param("slot", Types.Num) }},
-                {"detonate", new Param[] {  }},
+                {"targetrf", new Param[] { new Param("frequency", ParamType.Num) }},
+                {"flyto", new Param[] { }},
+                {"flythrough", new Param[] { }},
+                {"drop", new Param[] { new Param("slot", ParamType.Num) }},
 
                 {"pushtarget", new Param[] {  }},
                 {"poptarget", new Param[] {  }},
                 {"pushtargetalt", new Param[] {  }},
                 {"poptargetalt", new Param[] {  }},
+
+                {"fly", new Param[] {  }},
+                {"descend", new Param[] { new Param("speed", ParamType.Num) }},
+                {"gettarget", new Param[] { new Param("stack_pos", ParamType.Num), new Param("x", ParamType.NumVariable), new Param("y", ParamType.NumVariable), new Param("z", ParamType.NumVariable) }},
+                {"settarget", new Param[] { new Param("stack_pos", ParamType.Num), new Param("x", ParamType.Num), new Param("y", ParamType.Num), new Param("z", ParamType.Num) }},
+                {"getalt", new Param[] { new Param("stack_pos", ParamType.Num), new Param("altitude", ParamType.NumVariable) }},
+                {"setalt", new Param[] { new Param("stack_pos", ParamType.Num), new Param("altitude", ParamType.Num) }},
+                {"setpitch", new Param[] { new Param("pitch", ParamType.Num) }},
             };
 
             public bool Compile(string code) {
-                errors = new List<string>();
-                tokens = new List<string[]>();
-                instructions = new List<Instruction>();
-
+                errors.Clear();
                 code = Regex.Replace(code, @"#.*$", "", RegexOptions.Multiline);
 
                 Tokenize(code);
@@ -1027,12 +1284,29 @@ namespace Oxide.Plugins
                 }
 
                 var labelAddresses = new Dictionary<string, int>();
+                var variables = new Dictionary<string, Variable>();
+
+                // registers r0 - r7
+                for(int i = 0; i < 8; i++) {
+                    variables.Add("r" + i, new Variable { name = "r" + i, type = ParamType.NumVariable});
+                }
 
                 for(int i = 0; i < instructions.Count; i++) {
                     var instr = instructions[i];
 
                     if(instr.name == "label") {
                         labelAddresses.Add(instr.args[0].stringValue, i);
+                    }
+
+                    if(instr.name == "num") {
+                        var arg = instr.args[0];
+
+                        if(variables.ContainsKey(arg.stringValue)) {
+                            errors.Add($"line {i}: variable already declared ({arg.stringValue})");
+                            return false;
+                        }
+
+                        variables.Add(arg.stringValue, new Variable {name = arg.stringValue, type = ParamType.NumVariable});
                     }
                 }
 
@@ -1042,9 +1316,23 @@ namespace Oxide.Plugins
                     for(int j = 0; j < instr.args.Count; j++) {
                         var arg = instr.args[j];
 
-                        if(arg.type == Types.Address) {
+                        if(arg.paramType == ParamType.Address) {
                             if(!labelAddresses.TryGetValue(arg.stringValue, out arg.addressValue)) {
                                 errors.Add($"line {i}: invalid label ({arg.stringValue})");
+                                return false;
+                            }
+                        }
+
+                        if(arg.argType == ParamType.NumVariable) {
+                            if(!variables.ContainsKey(arg.stringValue)) {
+                                errors.Add($"line {i}: variable has not been declared ({arg.stringValue})");
+                                return false;
+                            }
+                        }
+
+                        if(arg.paramType == ParamType.Num) {
+                            if(arg.argType != ParamType.Num && arg.argType != ParamType.NumVariable) {
+                                errors.Add($"line {i}: incompatible argument type ({arg.stringValue}:{arg.argType}) for instruction ({instr.ToString()})");
                                 return false;
                             }
                         }
@@ -1061,10 +1349,11 @@ namespace Oxide.Plugins
                     errors.Add($"line {line}: invalid argument ({arg}) for ({instr}) spec: {instr} {String.Join(" ", parameters.Select(x => x.name + ':' + x.type))}");
                 };
 
-                Action<int, float, int, int, string> addArgument = (int index, float floatValue, int intValue, int addressValue, string stringValue) => {
+                Action<int, float, int, int, string, ParamType> addArgument = (int index, float floatValue, int intValue, int addressValue, string stringValue, Compiler.ParamType argType) => {
                     compiledInstruction.args.Add(new Instruction.Argument {
                         name = parameters[index].name,
-                        type = parameters[index].type,
+                        paramType = parameters[index].type,
+                        argType = argType,
                         rawValue = args[index],
                         addressValue = addressValue,
                         floatValue = floatValue,
@@ -1077,55 +1366,52 @@ namespace Oxide.Plugins
                     var arg = args[i];
                     var param = parameters[i];
 
-                    if(param.type == Types.Num) {
-                        var match = Regex.Match(arg, @"^[0-9]*[\.]?[0-9]*$");
+                    if(param.type == ParamType.Num) {
+                        var match = Regex.Match(arg, @"^[+-]*[0-9]*[\.]?[0-9]*$");
+                        var matchMapGridCol = Regex.Match(arg, @"^([a-zA-Z]{1,2})[\.]([0-9]*)?$");
+                        var matchNumVar = Regex.Match(arg, @"^[a-zA-Z_][a-zA-Z0-9_]*$");
 
-                        if(!match.Success) {
+                        if(!match.Success && !matchMapGridCol.Success && !matchNumVar.Success) {
                             fail(arg);
                             return false;
                         }
 
-                        if(match.Groups[0].ToString() == ".") {
-                            fail(arg);
-                            return false;
-                        }
-
-                        float value;
-                        if(!float.TryParse(arg, out value)) {
-                            fail(arg);
-                            return false;
-                        }
-
-                        addArgument(i, value, (int)value, 0, arg);
-                    }
-
-                    if(param.type == Types.CharNum) {
-                        var match = Regex.Match(arg, @"^([a-zA-Z]{1,2})([\.][0-9]*)?$");
-
-                        if(!match.Success) {
-                            fail(arg);
-                            return false;
-                        }
-
-                        var lettersStr = match.Groups[1].ToString().ToUpper();
-                        var lettersFractionStr = match.Groups[2].ToString();
-
-                        int lettersWhole = (lettersStr.Length == 1) ? lettersStr[0] - 'A' : lettersStr[1] + 26 - 'A';
-                        float lettersFraction = 0.0f;
-
-                        if(lettersFractionStr != "." && lettersFractionStr != "") {
-                            if(!float.TryParse(lettersFractionStr, out lettersFraction)) {
+                        if(matchNumVar.Success) {
+                            addArgument(i, 0, 0, 0, arg, ParamType.NumVariable);
+                        } else if (match.Success) {
+                            if(match.Groups[0].ToString() == ".") {
                                 fail(arg);
                                 return false;
                             }
-                        }
 
-                        var value = lettersWhole + lettersFraction;
-                        
-                        addArgument(i, value, (int)value, 0, arg);
+                            float value;
+                            if(!float.TryParse(arg, out value)) {
+                                fail(arg);
+                                return false;
+                            }
+
+                            addArgument(i, value, (int)value, 0, arg, param.type);
+                        } else if(matchMapGridCol.Success) {
+                            var lettersStr = matchMapGridCol.Groups[1].ToString().ToUpper();
+                            var lettersFractionStr = matchMapGridCol.Groups[2].ToString();
+
+                            int lettersWhole = (lettersStr.Length == 1) ? lettersStr[0] - 'A' : lettersStr[1] + 26 - 'A';
+                            float lettersFraction = 0.0f;
+
+                            if(lettersFractionStr != "." && lettersFractionStr != "") {
+                                if(!float.TryParse(lettersFractionStr, out lettersFraction)) {
+                                    fail(arg);
+                                    return false;
+                                }
+                            }
+
+                            var value = lettersWhole + lettersFraction;
+                            
+                            addArgument(i, value, (int)value, 0, arg, param.type);
+                        }
                     }
 
-                    if(param.type == Types.Identifier || param.type == Types.Address) {
+                    if(param.type == ParamType.Identifier || param.type == ParamType.Address || param.type == ParamType.NumVariable) {
                         var match = Regex.Match(arg, @"^[a-zA-Z_][a-zA-Z0-9_]*$");
 
                         if(!match.Success) {
@@ -1133,7 +1419,7 @@ namespace Oxide.Plugins
                             return false;
                         }
                         
-                        addArgument(i, 0, 0, 0, arg);
+                        addArgument(i, 0, 0, 0, arg, param.type);
                     }
                 }
 
@@ -1142,6 +1428,8 @@ namespace Oxide.Plugins
             }
 
             bool Parse() {
+                instructions.Clear();
+
                 for(int i = 0; i < tokens.Count; i++) {
                     var line = tokens[i];
                     var instr = line[0];
@@ -1168,6 +1456,7 @@ namespace Oxide.Plugins
             }
 
             void Tokenize(string code) {
+                tokens.Clear();
                 var lines = code.Split(new[] {"\r\n", "\r", "\n"}, StringSplitOptions.RemoveEmptyEntries);
 
                 for(int i = 0; i < lines.Length; i++) {
