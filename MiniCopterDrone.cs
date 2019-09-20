@@ -283,13 +283,9 @@ namespace Oxide.Plugins
 
                     if(arg.paramType == Compiler.ParamType.Num && arg.argType == Compiler.ParamType.NumVariable) {
                         Compiler.Instruction variable;
-                        if(numVariables.TryGetValue(arg.stringValue, out variable)) {
-                            arg.floatValue = variable.args[0].floatValue;
-                            arg.intValue = variable.args[0].intValue;
-                        } else {
-                            failReason = $"couldn't find variable \"{arg.stringValue}\"";
-                            return false;
-                        }
+                        numVariables.TryGetValue(arg.stringValue, out variable);
+                        arg.floatValue = variable.args[0].floatValue;
+                        arg.intValue = variable.args[0].intValue;
                     }
                 }
 
@@ -345,11 +341,7 @@ namespace Oxide.Plugins
 
                     if(isOneOfThese) {
                         Compiler.Instruction variable;
-                        if(!this.numVariables.TryGetValue(instr.args[0].stringValue, out variable)) {
-                            failReason = $"couldn't find variable \"{instr.args[0].stringValue}\"";
-                            return false;
-                        }
-
+                        this.numVariables.TryGetValue(instr.args[0].stringValue, out variable);
                         variable.args[0].floatValue = result;
                     }
                 }
