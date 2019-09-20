@@ -1815,6 +1815,7 @@ namespace Oxide.Plugins
                 
                 var endTime = Time.realtimeSinceStartup;
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
+                // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
             }
         }
 
