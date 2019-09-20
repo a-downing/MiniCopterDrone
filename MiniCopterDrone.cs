@@ -16,7 +16,6 @@ namespace Oxide.Plugins
 {
     [Info("Minicopter Drone", "Andrew", "1.0.0")]
     public class MiniCopterDrone : RustPlugin {
-        static MiniCopterDrone plugin;
         DroneManager droneManager = null;
         static ConfigData config;
         static Compiler compiler = new Compiler();
@@ -561,7 +560,6 @@ namespace Oxide.Plugins
             Compiler.Instruction currentInstruction = null;
             float desiredAltitude = 0;
             Vector3 target = Vector3.zero;
-            bool haveTarget = false;
             float sleepTime = -1;
             float engineStartTime = -1;
             float landingSpeed = 0;
@@ -574,7 +572,6 @@ namespace Oxide.Plugins
                 currentInstruction = null;
                 desiredAltitude = 0;
                 target = Vector3.zero;
-                haveTarget = false;
                 sleepTime = -1;
                 flags = 0;
                 landingSpeed = 0;
@@ -1639,7 +1636,7 @@ namespace Oxide.Plugins
             Cleanup();
         }
 
-        class PIDController {
+        static class PIDController {
             public class Base {
                 public float p;
                 public float i;
