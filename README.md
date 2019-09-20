@@ -1,126 +1,152 @@
 # MiniCopterDrone
 ### A Rust uMod plugin giving the minicopter drone functionality
-**(This guide is not even close to complete)**
+**To activate the drone drag a note containing instructions into the wooden box (may be invisible) under the tail. The minicopter must have fuel.**
 
-To activate the drone drag a note containing instructions into the wooden box (may be invisible) under the tail.
+**Note format:**
+The first line must be #droneasm, instructions are separated by newlines or a semicolon, comments start with # and continue to the end of the line 
 
-#### Note format:
-The first line must be #droneasm, instructions are separated by newlines or a semicolon, comments start with # and continue to the end of the line
-Example:
-```
-#droneasm
-startengine #starting the engine
-```
-  
- #### Basic instructions:
+**Basic instructions:**
 
 `startengine`
-___
+
+start the engine
 
 `stopengine`
-___
+
+stop the engine
 
 `target <map_col> <map_row> <altitude_in_meters>`
 
-targets a point of the map. For example to target the center of grid A0 50 meters above the terrain:
-`target A.5 0.5 50`
-___
+targets a point of the map. For example to target the center of grid A0 50 meters above the terrain: `target A.5 0.5 50`
 
 `sleep <seconds>`
 
 pause execution for the given number of seconds (interrupts can still be caught)
-___
+
 `targetalt <altitude_in_meters>`
 
 changes the target altitude, leaving the targeted ground position if any unchanged
-___    
+
 `targethere`
 
 target the current position and altitude of the minicopter
-___
+
 `targetrf <frequency>`
 
 target the position of the closest broadcasting transmitter on the given frequency, if none, the current target is unaffected
-___
+
+`pushtarget` / `pushtargetalt`
+
+push the current target/alt onto a stack
+
+`poptarget` / `poptargetalt`
+
+remove the most recently pushed target/alt and set it to the current target 
+
 `setpitch <pitch>`
 
 set the maximum pitch angle
-___
+
 `flyto <pitch_angle>`
 
 fly to the current target. The instruction finishes when the target is reached
-___
+
 `flythrough <pitch_angle>`
 
 fly to the current target. The instruction finishes when 10 meters from the target
-___
+
 `land <speed>`
 
 land at `<speed>` meters per second
-___
+
 `drop <slot_number>`
 
 drop the item in slot number `<slot_number>` (in the wooden box). The top left slot is 0, botton right is 11
-___
+
 `waitrf <frequency>`
 
 pause until an RF broadcaster transmits on frequency `<frequency>`
-___
 
-#### Advanced Instructions
+**Advanced Instructions:**
 These instructions don't directly affect the flight of the minicopter, but are for program control flow
 
 `label <label_name>`
 
 place a label on a line to be able to jump to it
-___
+
 `isr <interrupt_name>`
 
-label for CPU to jump to when a specific interrupt is triggered
-___
+label for drone CPU to jump to when a specific interrupt is triggered
+
 `jmp <label_name>`
 
 jump to a label
-___
+
 `call <label_name>`
 
-jump to a label being able to `ret` afterwards
-___
+jump to a label being able to ret afterwards
+
 `int <interrupt_name>`
 
 trigger an interrupt from software
-___
+
 `ret`
 
-return from a `call` or `int`
+return from a call or int
 
-#### Interrupts
+**For Very Advanced Users:** (see the code)
+
+registers: `r0` - `r7` and `rslt`
+
+Instructions:
+
+`num`, `mov`, `push`, `pop`, `je`, `jne`, `ja`, `jna`, `jg`, `jge`, `jl`, `jle`, `add`, `sub`, `mul`, `div`, `sqrt`, `pow`, `round`, `floor`, `ceil`, `min`, `max`, `lerp`
+
+**Interrupts:**
+
 `rfa<frequency>`
 
 triggered when an RF broadcaster starts transmitting on the given frequency, for example `isr rfa777` or `int rfa777`
-___
+
 `rfna<frequency>`
 
 triggered when an RF broadcaster stops transmitting on the given frequency
 
+`at_target`
 
-#### Examples
+triggered when a target is reached
 
-Fly to H 7 at an altitude of 100 meters and maximum pitch angle of 20 degrees, land at 5 meters per second, wait for 1 minute, then fly to J13
+`almost_at_target`
+
+triggered when 10 meters from target
+
+`at_altitude`
+
+triggered when at the target altitude
+
+`landed`
+
+triggered when landed
+
+**Examples:**
+
+Fly to H 7 at an altitude of 100 meters and maximum pitch angle of 20 degrees, land at 5 meters per second, wait for RF freq 333, then fly to J13
 
 ```
 #droneasm
 startengine
 target H 7 100
-flyto 20
+setpitch 20
+flyto
 land 5
-sleep 60
+waitrf 333
 target J 13 100
 flyto
 land 5
 ```
 
 Hover 50 meters above the current position. When RF frequency 5555 is transmitted, fly to the position it was broadcast from.
+
 ```
 #droneasm
 jmp main #jump to the main part of the program
@@ -131,9 +157,10 @@ isr rfa5555 #program execution jumps here when an RF broadcaster starts broadcas
     
 label main
     startengine
+    setpitch 30
     targethere
     targetalt 50 #target 50 meters above the current position
-    flyto 30 # fly to the target (it will continue to hover there until given another instruction)
+    flyto # fly to the target (it will continue to hover there until given another instruction)
     
     label loop
         jmp loop #loop forever, if the program finishes the drone shuts down
