@@ -1178,8 +1178,9 @@ namespace Oxide.Plugins
                 var match = Regex.Match(coord, @"^([A-Za-z]{1,2})([0-9]{1,2})$");
 
                 if(match.Success && match.Groups.Count == 3) {
-                    string letter = match.Groups[1].ToString().ToUpper();
-                    string numberWholeStr = match.Groups[2].ToString();
+                    var groups = match.Groups;
+                    string letter = groups[1].ToString().ToUpper();
+                    string numberWholeStr = groups[2].ToString();
 
                     int letterNumber = (letter.Length == 1) ? letter[0] - 'A' : letter[1] + 26 - 'A';
                     float row;
@@ -1613,9 +1614,11 @@ namespace Oxide.Plugins
                 }
 
                 foreach(var ent in miniCopter.children) {
-                    if(ent is StorageContainer) {
-                        if(ent.name == "minicopterdrone.storage") {
-                            storage = ent as StorageContainer;
+                    var container = ent as StorageContainer;
+
+                    if(container) {
+                        if(container.name == "minicopterdrone.storage") {
+                            storage = container;
                         }
                     }
                 }
