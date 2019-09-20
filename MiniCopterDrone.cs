@@ -52,7 +52,7 @@ namespace Oxide.Plugins
             }
 
             Vector3 pos;
-            if( TryMapGridToPosition(argument.Args[0], out pos, false)) {
+            if(TryMapGridToPosition(argument.Args[0], out pos, false)) {
                 var actualPos = argument.Player().transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
                 Config.WriteObject(config, true);
@@ -946,13 +946,12 @@ namespace Oxide.Plugins
                             var desiredAltitude = currentInstruction.args[2].floatValue;
 
                             Vector3 pos1;
-                            if(TryMapGridToPosition(mapCol, mapRow, out pos1)) {
-                                this.target = pos1;
-                                this.desiredAltitude = desiredAltitude;
-                                SetFlag(Flag.HasTarget, true);
-                                SetFlag(Flag.HasTargetAltitude, true);
-                                ResetControl();
-                            }
+                            pos1 = MapGridToPosition(mapCol, mapRow);
+                            this.target = pos1;
+                            this.desiredAltitude = desiredAltitude;
+                            SetFlag(Flag.HasTarget, true);
+                            SetFlag(Flag.HasTargetAltitude, true);
+                            ResetControl();
 
                             break;
                         case "targetalt":
@@ -1174,31 +1173,18 @@ namespace Oxide.Plugins
              const float gridSize = 146.33f;
              float mapSize = ConVar.Server.worldsize;
             
-            if(coord.Length <= 11) {
-                var match = Regex.Match(coord, @"^([A-Za-z]{1,2})((?:\.)??|(?:\.[0-9]{1,2})?),([0-9]{1,2})((?:\.)??|(?:\.[0-9]{1,2})?)$");
+            if(coord.Length <= 4) {
+                var match = Regex.Match(coord, @"^([A-Za-z]{1,2})([0-9]{1,2})$");
 
-                if(match.Success && match.Groups.Count == 5) {
+                if(match.Success && match.Groups.Count == 3) {
                     string letter = match.Groups[1].ToString().ToUpper();
-                    string letterFractionStr = match.Groups[2].ToString();
-                    string numberWholeStr = match.Groups[3].ToString();
-                    string numberFractionStr = match.Groups[4].ToString();
-
-                    float letterFraction = 0;
-                    float numberFraction = 0;
-
-                    if(letterFractionStr != "" && letterFractionStr != ".") {
-                        letterFraction = float.Parse(letterFractionStr);
-                    }
-
-                    if(numberFractionStr != "" && numberFractionStr != ".") {
-                        letterFraction = float.Parse(numberFractionStr);
-                    }
+                    string numberWholeStr = match.Groups[2].ToString();
 
                     int letterNumber = (letter.Length == 1) ? letter[0] - 'A' : letter[1] + 26 - 'A';
-                    float col = letterNumber + letterFraction;
-                    float row = float.Parse(numberWholeStr) + numberFraction;
+                    float row;
+                    float.TryParse(numberWholeStr, out row);
 
-                    float x = col * gridSize - (mapSize / 2);
+                    float x = letterNumber * gridSize - (mapSize / 2);
                     float y = -row * gridSize + (mapSize / 2);
 
                     result = new Vector3(x, 0, y);
@@ -1215,20 +1201,20 @@ namespace Oxide.Plugins
             return false;
         }
 
-        static bool TryMapGridToPosition(float col, float row, out Vector3 result, bool useCorrection = true) {
+        static Vector3 MapGridToPosition(float col, float row, bool useCorrection = true) {
              const float gridSize = 146.33f;
              float mapSize = ConVar.Server.worldsize;
 
             float x = col * gridSize - (mapSize / 2);
             float y = -row * gridSize + (mapSize / 2);
 
-            result = new Vector3(x, 0, y);
+            var result = new Vector3(x, 0, y);
 
             if(useCorrection) {
                 result += config.gridPositionCorrection;
             }
 
-            return true;
+            return result;
         }
 
         void OnEntitySpawned(BaseNetworkable entity)
