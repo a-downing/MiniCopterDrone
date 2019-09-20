@@ -28,7 +28,7 @@ ___
 
 `sleep <seconds>`
 
-Pause execution for the given number of seconds (interrupts can still be caught)
+pause execution for the given number of seconds (interrupts can still be caught)
 ___
 `targetalt <altitude_in_meters>`
 
@@ -42,25 +42,29 @@ ___
 
 target the position of the closest broadcasting transmitter on the given frequency, if none, the current target is unaffected
 ___
+`setpitch <pitch>`
+
+set the maximum pitch angle
+___
 `flyto <pitch_angle>`
 
-Fly to the current target at the provided pitch angle. The instruction finishes when the target is reached
+fly to the current target. The instruction finishes when the target is reached
 ___
 `flythrough <pitch_angle>`
 
-Fly to the current target at the provided pitch angle. The instruction finishes when 10 meters from the target
+fly to the current target. The instruction finishes when 10 meters from the target
 ___
 `land <speed>`
 
-Land at `<speed>` meters per second
+land at `<speed>` meters per second
 ___
 `drop <slot_number>`
 
-Drop the item in slot number `<slot_number>` (in the wooden box). The top left slot is 0, botton right is 11
+drop the item in slot number `<slot_number>` (in the wooden box). The top left slot is 0, botton right is 11
 ___
 `waitrf <frequency>`
 
-Pause until an RF broadcaster transmits on frequency `<frequency>`
+pause until an RF broadcaster transmits on frequency `<frequency>`
 ___
 
 #### Advanced Instructions
@@ -68,36 +72,36 @@ These instructions don't directly affect the flight of the minicopter, but are f
 
 `label <label_name>`
 
-Place a label on a line to be able to jump to it
+place a label on a line to be able to jump to it
 ___
 `isr <interrupt_name>`
 
-Label for CPU to jump to when a specific interrupt is triggered
+label for CPU to jump to when a specific interrupt is triggered
 ___
 `jmp <label_name>`
 
-Jump to a label
+jump to a label
 ___
 `call <label_name>`
 
-Jump to a label being able to `ret` afterwards
+jump to a label being able to `ret` afterwards
 ___
 `int <interrupt_name>`
 
-Trigger an interrupt from software
+trigger an interrupt from software
 ___
 `ret`
 
-Return from a `call` or `int`
+return from a `call` or `int`
 
 #### Interrupts
 `rfa<frequency>`
 
-Triggered when an RF broadcaster starts transmitting on the given frequency, for example `isr rfa777` or `int rfa777`
+triggered when an RF broadcaster starts transmitting on the given frequency, for example `isr rfa777` or `int rfa777`
 ___
 `rfna<frequency>`
 
-Triggered when an RF broadcaster stops transmitting on the given frequency
+triggered when an RF broadcaster stops transmitting on the given frequency
 
 
 #### Examples
