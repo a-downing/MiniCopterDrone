@@ -14,7 +14,7 @@ using UnityEngine.Events;
 
 namespace Oxide.Plugins
 {
-    [Info("MiniCopter Drone", "Andrew", "1.0.0")]
+    [Info("Minicopter Drone", "Andrew", "1.0.0")]
     public class MiniCopterDrone : RustPlugin {
         static MiniCopterDrone plugin;
         DroneManager droneManager = null;
