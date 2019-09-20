@@ -17,57 +17,16 @@ namespace Oxide.Plugins
     [Info("MiniCopterDrone", "Andrew", "1.0.0")]
     public class MiniCopterDrone : RustPlugin {
         static MiniCopterDrone plugin;
-        static public BasePlayer debugPlayer = null;
         DroneManager droneManager = null;
         static ConfigData config;
         static Compiler compiler = new Compiler();
         const string calibratePerm = "minicopterdrone.calibrate.allowed";
-        static Benchmarker benchmarker = new Benchmarker();
-
-        class Benchmarker {
-            class Benchmark {
-                public string name;
-                public float best;
-                public float average;
-                public float worst;
-                public int samples;
-            }
-
-            Dictionary<string, Benchmark> benchmarks = new Dictionary<string, Benchmark>();
-
-            public void Update(string name, float time) {
-                Benchmark benchmark;
-                if(!benchmarks.TryGetValue(name, out benchmark)) {
-                    benchmarks.Add(name, new Benchmark {
-                        name = name,
-                        best = 0,
-                        average = 0,
-                        worst = 0,
-                        samples = 1
-                    });
-                } else {
-                    benchmark.samples++;
-                    benchmark.best = Mathf.Min(benchmark.best, time);
-                    benchmark.worst = (benchmark.samples < 10) ? 0 : Mathf.Max(benchmark.worst, time);
-                    benchmark.average = (benchmark.samples < 10) ? 0 : benchmark.average - (benchmark.average / benchmark.samples) + (time / benchmark.samples);
-                }
-            }
-
-            public void Report() {
-                foreach(var pair in benchmarks) {
-                    var benchmark = pair.Value;
-                    Print($"benchmark: {benchmark.name} avg: {benchmark.average}, best: {benchmark.best}, worst: {benchmark.worst}");
-                }
-            }
-        }
 
         class ConfigData {
             [JsonProperty(PropertyName = "maxProgramInstructions")]
             public int maxProgramInstructions;
             [JsonProperty(PropertyName = "gridPositionCorrection")]
             public Vector3 gridPositionCorrection;
-            [JsonProperty(PropertyName = "debugPlayerId")]
-            public ulong debugPlayerId;
             [JsonProperty(PropertyName = "maxInstructionsPerFixedUpdate")]
             public int maxInstructionsPerFixedUpdate;
         }
@@ -111,13 +70,10 @@ namespace Oxide.Plugins
         class DroneManager : MonoBehaviour {
             public const string Guid = "918729b6-ca44-46c6-8ad6-1722abff10d4";
             Dictionary<int, Drone> drones = new Dictionary<int, Drone>();
-            public MiniCopterDrone plugin = null;
 
             public static HashSet<int> activeFrequencies = new HashSet<int>();
             public static HashSet<int> risingEdgeFrequencies = new HashSet<int>();
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
-
-            int counter = 0;
 
             void FixedUpdate() {
                 var startTime = Time.realtimeSinceStartup;
@@ -151,22 +107,12 @@ namespace Oxide.Plugins
                     var drone = value.Value;
                     
                     if(!drone.miniCopterRef.Get(true)) {
-                        Print("drone died!");
                         drones.Remove(value.Key);
                         continue;
                     }
 
                     drone.FixedUpdate();
                 }
-
-                var elapsedTime = Time.realtimeSinceStartup - startTime;
-                benchmarker.Update("DroneManager.FixedUpdate", elapsedTime);
-
-                if(counter % Mathf.RoundToInt(1 / Time.fixedDeltaTime) == 0) {
-                    benchmarker.Report();
-                }
-
-                counter++;
             }
 
             public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
@@ -348,9 +294,6 @@ namespace Oxide.Plugins
                 }
 
                 switch(instr.name) {
-                    case "print":
-                        Print($"cpu print: {instr.args[0].stringValue} {instr.args[1].floatValue}");
-                        break;
                     case "jmp":
                         Jump(instr.args[0].addressValue);
                         break;
@@ -776,7 +719,7 @@ namespace Oxide.Plugins
                 }
 
                 if(!copter.HasFuel()) {
-                    //StopEngine();
+                    StopEngine();
                 }
 
                 if(HasFlag(Flag.EngineStarting) && Time.fixedTime > engineStartTime + 5.0f) {
@@ -881,24 +824,6 @@ namespace Oxide.Plugins
                 }
 
                 Fly();
-
-                /*if(this.currentInstruction != null) {
-                    var flagValues = Enum.GetValues(typeof(Flag));
-                    var flagNames = Enum.GetNames(typeof(Flag));
-                    var setFlags = new List<string>();
-
-                    for(int i = 0; i < flagValues.Length; i++) {
-                        var val = (Flag)flagValues.GetValue(i);
-                        if(HasFlag(val)) {
-                            setFlags.Add(flagNames[i]);
-                        }
-                    }
-
-                    plugin.SendReply(debugPlayer, $"{this.currentInstruction.name} {String.Join(", ", setFlags)}");
-                    plugin.SendReply(debugPlayer, $"this.target: {this.target}");
-                    plugin.SendReply(debugPlayer, $"this.desiredAltitude: {this.desiredAltitude}");
-                    plugin.SendReply(debugPlayer, $"this.desiredPitch: {this.desiredPitch}");
-                }*/
 
                 var currentAltitude = GetAltitude(copter.transform.position);
                 var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
@@ -1391,9 +1316,6 @@ namespace Oxide.Plugins
             }
 
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
-                // for debugging
-                {"print", new Param[] { new Param("text", ParamType.Identifier), new Param("number", ParamType.Num) }},
-
                 {"label", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"isr", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"jmp", new Param[] { new Param("label_name", ParamType.Address) }},
@@ -1695,15 +1617,11 @@ namespace Oxide.Plugins
         }
 
         void Loaded() {
-            plugin = this;
-
             permission.RegisterPermission(calibratePerm, this);
 
             Cleanup();
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
-            droneManager.plugin = this;
-            debugPlayer = BasePlayer.FindByID(config.debugPlayerId);
 
             foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
                 StorageContainer storage = null;
@@ -1723,194 +1641,10 @@ namespace Oxide.Plugins
 
                 ProcessMiniCopter(miniCopter, storage);
             }
-
-            /*var compiler = new Compiler();
-            var cpu = new DroneCPU();
-
-            bool success = compiler.Compile(@"
-            label top
-            num reason
-
-            num x; num y; num z
-            num a; num b; num c
-
-            mov reason 0
-            mov x 1
-            mov y 2
-            mov z 3
-
-            jne x 1 failed
-            jne y 2 failed
-            jne z 3 failed
-            jna x 1 failed
-            jna y 2 failed
-            jna z 3 failed
-
-            mov reason 1
-            push x
-            push y
-            push z
-
-            pop r0
-            pop r1
-            pop r2
-
-            jne r0 3 failed
-            jne r1 2 failed
-            jne r2 1 failed
-
-            mov reason 2
-            je 1 1.1 failed
-            ja 1 1.1 failed
-            jl 1.1 1 failed
-            jle 1.1 1 failed
-            jg 1 1.1 failed
-            jge 1 1.1 failed
-
-            mov reason 3
-            #oops
-
-            mov reason 4
-            add 1 2
-            jne rslt 3 failed
-            sub 1 2
-            jne rslt -1 failed
-            mul 7 7
-            jne rslt 49 failed
-            div 27 3
-            jne rslt 9 failed
-            pow 5 2
-            jne rslt 25 failed
-            min 3 2
-            jne 2 rslt failed
-            max 3 2
-            jne rslt 3 failed
-
-            mov reason 5
-            sqrt 49
-            jne rslt 7 failed
-            abs -1
-            jne rslt 1 failed
-            floor 1.9999
-            jne rslt 1 failed
-            ceil 1.0001
-            jne rslt 2 failed
-            round 1.4999
-            jne rslt 1 failed
-            sign -3.14
-            jne rslt -1 failed
-
-            mov reason 6
-            push 1
-            push 2
-            push 3
-            call vec_length
-            #print length r0
-
-            #3.74165738677394
-            mov reason 7
-            jna r0 3.741657 failed
-
-            mov reason 8
-            jne r0 3.74165738 failed
-
-            mov reason 9
-            lerp 1 2 0.5
-            #jne rslt 1.5 failed
-            
-            jmp end
-
-            label failed
-                print failed reason
-
-            label vec_length
-                num sum
-                mov sum 0
-                pop r0
-                pop r1
-                pop r2
-                mul r0 r0
-                add sum rslt
-                mov sum rslt
-                mul r1 r1
-                add sum rslt
-                mov sum rslt
-                mul r2 r2
-                add sum rslt
-                mov sum rslt
-                sqrt sum
-                mov r0 rslt
-                ret
-
-            label end
-            #print success 0
-            jmp top
-            ");
-
-            if(!success) {
-                foreach(var error in compiler.errors) {
-                    Print(error);
-                }
-            } else {
-                cpu.LoadInstructions(compiler.instructions);
-                var startTime = Time.realtimeSinceStartup;
-
-                int numCycles = 100000000;
-                for(int i = 0; i < numCycles; i++) {
-                    string reason;
-                    Compiler.Instruction instruction;
-                    if(cpu.Cycle(out instruction, out reason)) {
-
-                    } else {
-                        Print(reason);
-                        break;
-                    }
-                }
-                
-                var endTime = Time.realtimeSinceStartup;
-                Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
-                // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
-            }*/
-
-            var compiler = new Compiler();
-            var success = compiler.Compile(@"
-            #droneasm
-            startengine
-            settarget -1 0 0 0
-            setalt -1 60
-            setpitch 30
-            flythrough
-
-            label loop
-                jmp loop
-            ");
-
-            if(!success) {
-                foreach(var error in compiler.errors) {
-                    Print(error);
-                }
-
-                return;
-            }
-
-            for(int i = 0; i < 100; i++) {
-                var position = new Vector3(UnityEngine.Random.Range(-1000, 1000), 200, UnityEngine.Random.Range(-1000, 1000));
-                var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
-                miniCopter.Spawn();
-                var storage = ProcessMiniCopter(miniCopter, null);
-                var drone = droneManager.AddDrone(miniCopter, storage);
-                drone.cpu.LoadInstructions(compiler.instructions);
-                drone.SetFlag(Drone.Flag.EngineOn, true);
-                drone.active = true;
-            }
         }
 
         void Unload() {
             Cleanup();
-
-            foreach(var ent in GameObject.FindObjectsOfType<MiniCopter>().ToArray()) {
-                ent.Kill();
-            }
         }
 
         class PIDController {
