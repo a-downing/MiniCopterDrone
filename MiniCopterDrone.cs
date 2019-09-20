@@ -2,15 +2,11 @@ using System;
 using Oxide.Core;
 using Oxide.Core.Configuration;
 using Oxide.Core.Plugins;
-using Oxide.Game.Rust.Cui;
 using System.Linq;
-using System.Reflection;
 using System.Collections.Generic;
 using Newtonsoft.Json;
 using System.Text.RegularExpressions;
-
 using UnityEngine;
-using UnityEngine.Events;
 
 namespace Oxide.Plugins
 {
@@ -33,7 +29,7 @@ namespace Oxide.Plugins
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
                 maxProgramInstructions = 128,
-                gridPositionCorrection = new Vector3(0.44f, 0, -74.47f),
+                gridPositionCorrection = new Vector3(1, 0, 75),
                 maxInstructionsPerFixedUpdate = 32
             };
 
@@ -46,6 +42,11 @@ namespace Oxide.Plugins
 
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
+            if(!argument.Player()) {
+                argument.ReplyWith("this command must be run as a player");
+                return;
+            }
+
             if(!permission.UserHasPermission(argument.Player().UserIDString, calibratePerm)) {
                 argument.ReplyWith($"error: you need the {calibratePerm} to use this command");
                 return;
@@ -73,11 +74,15 @@ namespace Oxide.Plugins
             public static HashSet<int> activeFrequencies = new HashSet<int>();
             public static HashSet<int> risingEdgeFrequencies = new HashSet<int>();
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
+            List<int> removeActiveList = new List<int>();
+            List<int> removeDroneList = new List<int>();
 
             void FixedUpdate() {
                 var startTime = Time.realtimeSinceStartup;
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
+                removeActiveList.Clear();
+                removeDroneList.Clear();
 
                 foreach(var freq in RFManager._broadcasters) {
                     if(freq.Value.Count > 0) {
@@ -88,29 +93,37 @@ namespace Oxide.Plugins
                     }
                 }
 
-                foreach(var freq in activeFrequencies.ToArray()) {
+                foreach(var freq in activeFrequencies) {
                     List<IRFObject> list;
 
                     if(!RFManager._broadcasters.TryGetValue(freq, out list)) {
-                        activeFrequencies.Remove(freq);
+                        removeActiveList.Add(freq);
                         fallingEdgeFrequencies.Add(freq);
                     } else {
                         if(list.Count == 0) {
-                            activeFrequencies.Remove(freq);
+                            removeActiveList.Add(freq);
                             fallingEdgeFrequencies.Add(freq);
                         }
                     }
                 }
 
-                foreach(var value in drones.ToArray()) {
+                foreach(var freq in removeActiveList) {
+                    activeFrequencies.Remove(freq);
+                }
+
+                foreach(var value in drones) {
                     var drone = value.Value;
                     
                     if(!drone.miniCopterRef.Get(true)) {
-                        drones.Remove(value.Key);
+                        removeDroneList.Add(value.Key);
                         continue;
                     }
 
                     drone.FixedUpdate();
+                }
+
+                foreach(var id in removeDroneList) {
+                    drones.Remove(id);
                 }
             }
 
@@ -1232,19 +1245,6 @@ namespace Oxide.Plugins
             }
         }
 
-        private void Cleanup() {
-            float time = Time.realtimeSinceStartup;
-            
-            foreach(var gameObject in GameObject.FindObjectsOfType<MonoBehaviour>().ToArray()) {
-                if(gameObject.name == DroneManager.Guid) {
-                    GameObject.Destroy(gameObject);
-                    break;
-                }
-            }
-
-            float timeAfter = Time.realtimeSinceStartup;
-        }
-
         class Compiler {
             List<string[]> tokens = new List<string[]>();
             public List<string> errors = new List<string>();
@@ -1472,7 +1472,7 @@ namespace Oxide.Plugins
 
                         if(matchNumVar.Success) {
                             addArgument(i, 0, 0, 0, arg, ParamType.NumVariable);
-                        } else if (match.Success) {
+                        } else if(match.Success) {
                             if(match.Groups[0].ToString() == ".") {
                                 fail(arg);
                                 return false;
@@ -1600,8 +1600,6 @@ namespace Oxide.Plugins
 
         void Loaded() {
             permission.RegisterPermission(calibratePerm, this);
-
-            Cleanup();
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
 
@@ -1628,7 +1626,9 @@ namespace Oxide.Plugins
         }
 
         void Unload() {
-            Cleanup();
+            if(droneManager) {
+                GameObject.Destroy(droneManager);
+            }
         }
 
         static class PIDController {
