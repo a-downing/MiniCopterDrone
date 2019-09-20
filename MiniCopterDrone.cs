@@ -15,14 +15,51 @@ using UnityEngine.Events;
 namespace Oxide.Plugins
 {
     [Info("MiniCopterDrone", "Andrew", "1.0.0")]
-    public class MiniCopterDrone : RustPlugin
-    {
+    public class MiniCopterDrone : RustPlugin {
         static MiniCopterDrone plugin;
         static public BasePlayer debugPlayer = null;
         DroneManager droneManager = null;
         static ConfigData config;
         static Compiler compiler = new Compiler();
         const string calibratePerm = "minicopterdrone.calibrate.allowed";
+        static Benchmarker benchmarker = new Benchmarker();
+
+        class Benchmarker {
+            class Benchmark {
+                public string name;
+                public float best;
+                public float average;
+                public float worst;
+                public int samples;
+            }
+
+            Dictionary<string, Benchmark> benchmarks = new Dictionary<string, Benchmark>();
+
+            public void Update(string name, float time) {
+                Benchmark benchmark;
+                if(!benchmarks.TryGetValue(name, out benchmark)) {
+                    benchmarks.Add(name, new Benchmark {
+                        name = name,
+                        best = 0,
+                        average = 0,
+                        worst = 0,
+                        samples = 1
+                    });
+                } else {
+                    benchmark.samples++;
+                    benchmark.best = Mathf.Min(benchmark.best, time);
+                    benchmark.worst = (benchmark.samples < 10) ? 0 : Mathf.Max(benchmark.worst, time);
+                    benchmark.average = (benchmark.samples < 10) ? 0 : benchmark.average - (benchmark.average / benchmark.samples) + (time / benchmark.samples);
+                }
+            }
+
+            public void Report() {
+                foreach(var pair in benchmarks) {
+                    var benchmark = pair.Value;
+                    Print($"benchmark: {benchmark.name} avg: {benchmark.average}, best: {benchmark.best}, worst: {benchmark.worst}");
+                }
+            }
+        }
 
         class ConfigData {
             [JsonProperty(PropertyName = "maxProgramInstructions")]
@@ -31,12 +68,15 @@ namespace Oxide.Plugins
             public Vector3 gridPositionCorrection;
             [JsonProperty(PropertyName = "debugPlayerId")]
             public ulong debugPlayerId;
+            [JsonProperty(PropertyName = "maxInstructionsPerFixedUpdate")]
+            public int maxInstructionsPerFixedUpdate;
         }
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
                 maxProgramInstructions = 128,
-                gridPositionCorrection = new Vector3(0.44f, 0, -74.47f)
+                gridPositionCorrection = new Vector3(0.44f, 0, -74.47f),
+                maxInstructionsPerFixedUpdate = 32
             };
 
             Config.WriteObject(config, true);
@@ -77,7 +117,10 @@ namespace Oxide.Plugins
             public static HashSet<int> risingEdgeFrequencies = new HashSet<int>();
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
 
+            int counter = 0;
+
             void FixedUpdate() {
+                var startTime = Time.realtimeSinceStartup;
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
 
@@ -104,30 +147,43 @@ namespace Oxide.Plugins
                     }
                 }
 
-                foreach(var value in drones) {
+                foreach(var value in drones.ToArray()) {
                     var drone = value.Value;
                     
                     if(!drone.miniCopterRef.Get(true)) {
+                        Print("drone died!");
                         drones.Remove(value.Key);
-                        return;
+                        continue;
                     }
 
                     drone.FixedUpdate();
                 }
+
+                var elapsedTime = Time.realtimeSinceStartup - startTime;
+                benchmarker.Update("DroneManager.FixedUpdate", elapsedTime);
+
+                if(counter % Mathf.RoundToInt(1 / Time.fixedDeltaTime) == 0) {
+                    benchmarker.Report();
+                }
+
+                counter++;
+            }
+
+            public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
+                var drone = new Drone();
+                drone.miniCopterRef.Set(miniCopter);
+                drone.instanceId = miniCopter.GetInstanceID();
+                drone.storage = storage;
+                drone.manager = this;
+                drones.Add(miniCopter.GetInstanceID(), drone);
+                return drone;
             }
 
             public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
                 Drone drone = null;
 
                 if(!drones.TryGetValue(miniCopter.GetInstanceID(), out drone)){
-                    drone = new Drone();
-
-                    drone.miniCopterRef.Set(miniCopter);
-                    drone.instanceId = miniCopter.GetInstanceID();
-                    drone.storage = storage;
-                    drone.manager = this;
-
-                    drones.Add(miniCopter.GetInstanceID(), drone);
+                    drone = AddDrone(miniCopter, storage);
                 }
 
                 drone.OnItemAddedOrRemoved(storage, item, added);
@@ -510,7 +566,7 @@ namespace Oxide.Plugins
             public DroneManager manager;
             public EntityRef miniCopterRef;
             public int instanceId;
-            DroneCPU cpu = new DroneCPU();
+            public DroneCPU cpu = new DroneCPU();
             public StorageContainer storage = null;
 
             public PIDController.Angular cyclicController = new PIDController.Angular {
@@ -720,7 +776,7 @@ namespace Oxide.Plugins
                 }
 
                 if(!copter.HasFuel()) {
-                    StopEngine();
+                    //StopEngine();
                 }
 
                 if(HasFlag(Flag.EngineStarting) && Time.fixedTime > engineStartTime + 5.0f) {
@@ -937,12 +993,9 @@ namespace Oxide.Plugins
                     SetFlag(Flag.ExecutingInstruction, false);
                 }
 
-                // some instructions finish immediately, so do them all in one FixedUpdate
-                // jmp, call, int, and ret aren't handled in the switch, so we can't get stuck in a loop
-                bool isFlightInstruction = true;
-
+                int numInstructionsExecuted = 0;
                 string failReason;
-                while(isFlightInstruction && !HasFlag(Flag.ExecutingInstruction)) {
+                while(numInstructionsExecuted < config.maxInstructionsPerFixedUpdate && !HasFlag(Flag.ExecutingInstruction)) {
                     // these need to stay synced
                     this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
 
@@ -950,6 +1003,8 @@ namespace Oxide.Plugins
                         Reset();
                         return;
                     }
+
+                    numInstructionsExecuted++;
 
                     switch(this.currentInstruction.name) {
                         case "sleep":
@@ -1196,9 +1251,6 @@ namespace Oxide.Plugins
                             this.waitRF = currentInstruction.args[0].intValue;
                             SetFlag(Flag.ExecutingInstruction, true);
                             break;
-                        default:
-                            isFlightInstruction = false;
-                            break;
                     }
                 }
             }
@@ -1276,7 +1328,7 @@ namespace Oxide.Plugins
         private void Cleanup() {
             float time = Time.realtimeSinceStartup;
             
-            foreach(var gameObject in GameObject.FindObjectsOfType<MonoBehaviour>()) {
+            foreach(var gameObject in GameObject.FindObjectsOfType<MonoBehaviour>().ToArray()) {
                 if(gameObject.name == DroneManager.Guid) {
                     GameObject.Destroy(gameObject);
                     break;
@@ -1615,7 +1667,7 @@ namespace Oxide.Plugins
             }
         }
 
-        void ProcessMiniCopter(MiniCopter miniCopter, StorageContainer existingStorage) {
+        StorageContainer ProcessMiniCopter(MiniCopter miniCopter, StorageContainer existingStorage) {
             StorageContainer storage;
 
             if(existingStorage == null) {
@@ -1638,6 +1690,8 @@ namespace Oxide.Plugins
                 droneManager.OnItemAddedOrRemoved(miniCopter, storage, item, added);
                 storage.OnItemAddedOrRemoved(item, added);
             });
+
+            return storage;
         }
 
         void Loaded() {
@@ -1659,7 +1713,7 @@ namespace Oxide.Plugins
                     continue;
                 }
 
-                foreach(var ent in miniCopter.children.ToList()) {
+                foreach(var ent in miniCopter.children) {
                     if(ent is StorageContainer) {
                         if(ent.name == "minicopterdrone.storage") {
                             storage = ent as StorageContainer;
@@ -1670,7 +1724,7 @@ namespace Oxide.Plugins
                 ProcessMiniCopter(miniCopter, storage);
             }
 
-            var compiler = new Compiler();
+            /*var compiler = new Compiler();
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
@@ -1816,11 +1870,47 @@ namespace Oxide.Plugins
                 var endTime = Time.realtimeSinceStartup;
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
                 // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
+            }*/
+
+            var compiler = new Compiler();
+            var success = compiler.Compile(@"
+            #droneasm
+            startengine
+            settarget -1 0 0 0
+            setalt -1 60
+            setpitch 30
+            flythrough
+
+            label loop
+                jmp loop
+            ");
+
+            if(!success) {
+                foreach(var error in compiler.errors) {
+                    Print(error);
+                }
+
+                return;
+            }
+
+            for(int i = 0; i < 100; i++) {
+                var position = new Vector3(UnityEngine.Random.Range(-1000, 1000), 200, UnityEngine.Random.Range(-1000, 1000));
+                var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
+                miniCopter.Spawn();
+                var storage = ProcessMiniCopter(miniCopter, null);
+                var drone = droneManager.AddDrone(miniCopter, storage);
+                drone.cpu.LoadInstructions(compiler.instructions);
+                drone.SetFlag(Drone.Flag.EngineOn, true);
+                drone.active = true;
             }
         }
 
         void Unload() {
             Cleanup();
+
+            foreach(var ent in GameObject.FindObjectsOfType<MiniCopter>().ToArray()) {
+                ent.Kill();
+            }
         }
 
         class PIDController {
