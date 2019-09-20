@@ -387,7 +387,7 @@ namespace Oxide.Plugins
                             rslt.args[0].floatValue = result;
                             rslt.args[0].intValue = (int)result;
                         }
-                    } catch(Exception e) {
+                    } catch(ArithmeticException e) {
                         failReason = e.ToString();
                         return false;
                     }
@@ -439,7 +439,7 @@ namespace Oxide.Plugins
                             rslt.args[0].floatValue = result;
                             rslt.args[0].intValue = (int)result;
                         }
-                    } catch(Exception e) {
+                    } catch(ArithmeticException e) {
                         failReason = e.ToString();
                         return false;
                     }
@@ -525,6 +525,7 @@ namespace Oxide.Plugins
                 dRC = 0.5f
             };
 
+            [Flags]
             public enum Flag {
                 EngineOn = 1 << 0,
                 EngineStarting = 1 << 1,
@@ -1219,8 +1220,13 @@ namespace Oxide.Plugins
 
         void OnEntitySpawned(BaseNetworkable entity)
         {
-            if(entity is MiniCopter) {
-                var miniCopter = entity as MiniCopter;
+            var miniCopter = entity as MiniCopter;
+
+            if(miniCopter) {
+                if(miniCopter.ShortPrefabName != "minicopter.entity") {
+                    return;
+                }
+
                 ProcessMiniCopter(miniCopter, null);
             }
         }
@@ -1485,7 +1491,7 @@ namespace Oxide.Plugins
                             int lettersWhole = (lettersStr.Length == 1) ? lettersStr[0] - 'A' : lettersStr[1] + 26 - 'A';
                             float lettersFraction = 0.0f;
 
-                            if(lettersFractionStr != "." && lettersFractionStr != "") {
+                            if(lettersFractionStr != "." && lettersFractionStr.Length != 0) {
                                 if(!float.TryParse(lettersFractionStr, out lettersFraction)) {
                                     fail(arg);
                                     return false;
