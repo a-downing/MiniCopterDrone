@@ -1,5 +1,25 @@
 # MiniCopterDrone
 ### A Rust uMod plugin giving the minicopter drone functionality
+
+
+#### Configuration:
+`"gridPositionCorrection"`:  (see console commands)
+
+`"gridSize"`: The length of a map grid square in units of game coordinates, you shouldn't need to change this.
+
+`"maxInstructionsPerFixedUpdate"`: The maximum number of instructions a drone can execute per FixedUpdate().
+
+`"maxProgramInstructions"`: The maximum number of instructions in a drone program
+
+#### Console Commands:
+`minicopterdrone.calibrate <map_col><map_row>`: This calibrates the relation between map grid lines and actual game coordinates and saves it to the `"gridPositionCorrection"` config property. To use it move your player to a grid line intersection, and give the coordinate as the argument, for example: `minicopterdrone.calibrate A13`. This may need to be run every time the map size is changed.
+
+#### Permissions: 
+`minicopterdrone.calibrate.allowed`: This is needed to run the `minicopterdrone.calibrate <map_col><map_row>` console command.
+
+
+#### Use:
+
 **To activate the drone drag a note containing instructions into the wooden box (may be invisible) under the tail. The minicopter must have fuel.**
 
 **Note format:**
