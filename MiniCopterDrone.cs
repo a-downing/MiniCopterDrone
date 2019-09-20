@@ -1674,6 +1674,7 @@ namespace Oxide.Plugins
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
+            label top
             num reason
 
             num x; num y; num z
@@ -1750,7 +1751,7 @@ namespace Oxide.Plugins
             push 2
             push 3
             call vec_length
-            print length r0
+            #print length r0
 
             #3.74165738677394
             mov reason 7
@@ -1788,7 +1789,8 @@ namespace Oxide.Plugins
                 ret
 
             label end
-            print success 0
+            #print success 0
+            jmp top
             ");
 
             if(!success) {
@@ -1797,8 +1799,10 @@ namespace Oxide.Plugins
                 }
             } else {
                 cpu.LoadInstructions(compiler.instructions);
+                var startTime = Time.realtimeSinceStartup;
 
-                for(int i = 0; i < 100; i++) {
+                int numCycles = 100000000;
+                for(int i = 0; i < numCycles; i++) {
                     string reason;
                     Compiler.Instruction instruction;
                     if(cpu.Cycle(out instruction, out reason)) {
@@ -1809,6 +1813,8 @@ namespace Oxide.Plugins
                     }
                 }
                 
+                var endTime = Time.realtimeSinceStartup;
+                Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
             }
         }
 
