@@ -337,13 +337,9 @@ namespace Oxide.Plugins
 
                     if(arg.paramType == Compiler.ParamType.Num && arg.argType == Compiler.ParamType.NumVariable) {
                         Compiler.Instruction variable;
-                        if(numVariables.TryGetValue(arg.stringValue, out variable)) {
-                            arg.floatValue = variable.args[0].floatValue;
-                            arg.intValue = variable.args[0].intValue;
-                        } else {
-                            failReason = $"couldn't find variable \"{arg.stringValue}\"";
-                            return false;
-                        }
+                        numVariables.TryGetValue(arg.stringValue, out variable);
+                        arg.floatValue = variable.args[0].floatValue;
+                        arg.intValue = variable.args[0].intValue;
                     }
                 }
 
@@ -1724,7 +1720,7 @@ namespace Oxide.Plugins
                 ProcessMiniCopter(miniCopter, storage);
             }
 
-            /*var compiler = new Compiler();
+            var compiler = new Compiler();
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
@@ -1733,6 +1729,11 @@ namespace Oxide.Plugins
 
             num x; num y; num z
             num a; num b; num c
+
+            mov reason 42
+            mov x 42
+            jne x 42 failed
+            print x x
 
             mov reason 0
             mov x 1
@@ -1843,8 +1844,8 @@ namespace Oxide.Plugins
                 ret
 
             label end
-            #print success 0
-            jmp top
+            print success 0
+            #jmp top
             ");
 
             if(!success) {
@@ -1870,9 +1871,9 @@ namespace Oxide.Plugins
                 var endTime = Time.realtimeSinceStartup;
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
                 // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
-            }*/
+            }
 
-            var compiler = new Compiler();
+            /*var compiler = new Compiler();
             var success = compiler.Compile(@"
             #droneasm
             startengine
@@ -1902,7 +1903,7 @@ namespace Oxide.Plugins
                 drone.cpu.LoadInstructions(compiler.instructions);
                 drone.SetFlag(Drone.Flag.EngineOn, true);
                 drone.active = true;
-            }
+            }*/
         }
 
         void Unload() {
