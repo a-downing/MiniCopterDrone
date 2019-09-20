@@ -12,6 +12,7 @@ namespace Oxide.Plugins
 {
     [Info("Minicopter Drone", "Andrew", "1.0.0")]
     public class MiniCopterDrone : RustPlugin {
+        static MiniCopterDrone plugin = null;
         DroneManager droneManager = null;
         static ConfigData config;
         static Compiler compiler = new Compiler();
@@ -28,6 +29,22 @@ namespace Oxide.Plugins
             public float gridSize;
         }
 
+        protected override void LoadDefaultMessages() {
+            lang.RegisterMessages(new Dictionary<string, string> {
+                ["must_run_as_player"] = "this command must be run as a player",
+                ["need_calibrate_perm"] = "error: you need the {0} permission to use this command",
+                ["grid_pos_corr_saved"] = "grid position correction saved",
+                ["calibrate_invalid_arg"] = "invalid argument format <grid_col><grid_row> ex: J13",
+                ["var_already_declared"] = "line {0}: variable already declared ({1})",
+                ["invalid_label"] = "line {0}: invalid label ({1})",
+                ["var_not_declared"] = "line {0}: variable has not been declared ({1})",
+                ["incompat_arg_type"] = "line {0}: incompatible argument type ({1}:{2}) for instruction ({3})",
+                ["invalid_arg"] = "line {0}: invalid argument ({1}) for ({2}) spec: {2} {3}",
+                ["invalid_instruction"] = "line {0}: invalid instruction ({1})",
+                ["wrong_num_args"] = "line {0}: wrong number of arguments for ({1}) spec: {1} {2}",
+            }, this);
+        }
+
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
                 maxProgramInstructions = 128,
@@ -41,17 +58,18 @@ namespace Oxide.Plugins
 
         void Init() {
             config = Config.ReadObject<ConfigData>();
+            plugin = this;
         }
 
         [ConsoleCommand("minicopterdrone.calibrate")]
         void Calibrate(ConsoleSystem.Arg argument) {
             if(!argument.Player()) {
-                argument.ReplyWith("this command must be run as a player");
+                argument.ReplyWith(lang.GetMessage("must_run_as_player", this));
                 return;
             }
 
             if(!permission.UserHasPermission(argument.Player().UserIDString, calibratePerm)) {
-                argument.ReplyWith($"error: you need the {calibratePerm} to use this command");
+                argument.ReplyWith(lang.GetMessage("need_calibrate_perm", this, argument.Player().UserIDString));
                 return;
             }
 
@@ -60,9 +78,9 @@ namespace Oxide.Plugins
                 var actualPos = argument.Player().transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
                 Config.WriteObject(config, true);
-                argument.ReplyWith($"gridPositionCorrection: {config.gridPositionCorrection.ToString()}");
+                argument.ReplyWith(lang.GetMessage("grid_pos_corr_saved", this, argument.Player().UserIDString));
             } else {
-                argument.ReplyWith("error: TryMapGridToPosition() failed");
+                argument.ReplyWith(lang.GetMessage("calibrate_invalid_arg", this, argument.Player().UserIDString));
             }
         }
 
@@ -122,7 +140,9 @@ namespace Oxide.Plugins
                         continue;
                     }
 
-                    drone.FixedUpdate();
+                    if(drone.active) {
+                        drone.FixedUpdate();
+                    }
                 }
 
                 foreach(var id in removeDroneList) {
@@ -1396,7 +1416,8 @@ namespace Oxide.Plugins
                         var arg = instr.args[0];
 
                         if(variables.ContainsKey(arg.stringValue)) {
-                            errors.Add($"line {i}: variable already declared ({arg.stringValue})");
+                            var message = plugin.lang.GetMessage("var_already_declared", plugin);
+                            errors.Add(string.Format(message, i, arg.stringValue));
                             return false;
                         }
 
@@ -1412,21 +1433,24 @@ namespace Oxide.Plugins
 
                         if(arg.paramType == ParamType.Address) {
                             if(!labelAddresses.TryGetValue(arg.stringValue, out arg.addressValue)) {
-                                errors.Add($"line {i}: invalid label ({arg.stringValue})");
+                                var message = plugin.lang.GetMessage("invalid_label", plugin);
+                                errors.Add(string.Format(message, i, arg.stringValue));
                                 return false;
                             }
                         }
 
                         if(arg.argType == ParamType.NumVariable) {
                             if(!variables.ContainsKey(arg.stringValue)) {
-                                errors.Add($"line {i}: variable has not been declared ({arg.stringValue})");
+                                var message = plugin.lang.GetMessage("var_not_declared", plugin);
+                                errors.Add(string.Format(message, i, arg.stringValue));
                                 return false;
                             }
                         }
 
                         if(arg.paramType == ParamType.Num) {
                             if(arg.argType != ParamType.Num && arg.argType != ParamType.NumVariable) {
-                                errors.Add($"line {i}: incompatible argument type ({arg.stringValue}:{arg.argType}) for instruction ({instr.ToString()})");
+                                var message = plugin.lang.GetMessage("incompat_arg_type", plugin);
+                                errors.Add(string.Format(message, i, arg.stringValue, arg.argType, instr.ToString()));
                                 return false;
                             }
                         }
@@ -1440,7 +1464,8 @@ namespace Oxide.Plugins
                 var compiledInstruction = new Instruction(instr);
 
                 Action<string> fail = (string arg) => {
-                    errors.Add($"line {line}: invalid argument ({arg}) for ({instr}) spec: {instr} {String.Join(" ", parameters.Select(x => x.name + ':' + x.type))}");
+                    var message = plugin.lang.GetMessage("invalid_arg", plugin);
+                    errors.Add(string.Format(message, line, arg, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                 };
 
                 Action<int, float, int, int, string, ParamType> addArgument = (int index, float floatValue, int intValue, int addressValue, string stringValue, Compiler.ParamType argType) => {
@@ -1532,12 +1557,14 @@ namespace Oxide.Plugins
                     var found = instructionDefs.TryGetValue(instr, out parameters);
 
                     if(!found) {
-                        errors.Add($"line {i}: invalid instruction ({instr})");
+                        var message = plugin.lang.GetMessage("invalid_instruction", plugin);
+                        errors.Add(string.Format(message, i, instr));
                         return false;
                     }
 
                     if(parameters.Length != line.Length - 1) {
-                        errors.Add($"line {i}: wrong number of arguments for ({instr}) spec: {instr} {String.Join(" ", parameters.Select(x => x.name + ':' + x.type))}");
+                        var message = plugin.lang.GetMessage("wrong_num_args", plugin);
+                        errors.Add(string.Format(message, i, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                         return false;
                     }
 
