@@ -150,8 +150,9 @@ namespace Oxide.Plugins
             int pic = 0;
             bool abort = false;
             string abortReason = null;
-
             Dictionary<string, Compiler.Instruction> numVariables = new Dictionary<string, Compiler.Instruction>();
+            List<float> stack = new List<float>();
+            public int maxStackSize = 64;
 
             public void Reset() {
                 pic = 0;
@@ -166,6 +167,7 @@ namespace Oxide.Plugins
                 interrupts.Clear();
                 picStack.Clear();
                 numVariables.Clear();
+                stack.Clear();
                 pic = 0;
 
                 for(int i = 0; i < instructions.Count; i++) {
@@ -178,8 +180,16 @@ namespace Oxide.Plugins
                     }
                 }
 
-                for(int i = 0; i < 8; i++) {
-                    var instruction = new Compiler.Instruction("r" + i);
+                for(int i = 0; i < 9; i++) {
+                    string varName;
+
+                    if(i == 0) {
+                        varName = "rslt";
+                    } else {
+                        varName = "r" + (i - 1);
+                    }
+
+                    var instruction = new Compiler.Instruction(varName);
 
                     instruction.args.Add(new Compiler.Instruction.Argument {
                         name = null,
@@ -269,11 +279,11 @@ namespace Oxide.Plugins
                 for(int i = 0; i < instr.args.Count; i++) {
                     var arg = instr.args[i];
 
-                    if(arg.argType == Compiler.ParamType.NumVariable) {
-                        Compiler.Instruction value;
-                        if(numVariables.TryGetValue(arg.stringValue, out value)) {
-                            arg.floatValue = value.args[0].floatValue;
-                            arg.intValue = value.args[0].intValue;
+                    if(arg.paramType == Compiler.ParamType.Num && arg.argType == Compiler.ParamType.NumVariable) {
+                        Compiler.Instruction variable;
+                        if(numVariables.TryGetValue(arg.stringValue, out variable)) {
+                            arg.floatValue = variable.args[0].floatValue;
+                            arg.intValue = variable.args[0].intValue;
                         } else {
                             failReason = $"couldn't find variable \"{arg.stringValue}\"";
                             return false;
@@ -281,107 +291,196 @@ namespace Oxide.Plugins
                     }
                 }
 
-                if(instr.name == "label" || instr.name == "isr" || instr.name == "var") {
-                    return Cycle(out instr, out failReason);
+                switch(instr.name) {
+                    case "print":
+                        Print($"cpu print: {instr.args[0].stringValue} {instr.args[1].floatValue}");
+                        break;
+                    case "jmp":
+                        Jump(instr.args[0].addressValue);
+                        break;
+                    case "call":
+                        Call(instr.args[0].addressValue);
+                        break;
+                    case "int":
+                        Interrupt(instr.args[0].stringValue);
+                        break;
+                    case "ret":
+                        if(!Ret()) {
+                            failReason = "no address to return from";
+                            return false;
+                        }
+
+                        break;
+                    case "push":
+                        if(stack.Count == maxStackSize) {
+                            failReason = $"maximum stack size exceeded ({maxStackSize})";
+                            return false;
+                        }
+
+                        stack.Add(instr.args[0].floatValue);
+                        break;
                 }
 
-                if(instr.name == "jmp") {
-                    Jump(instr.args[0].addressValue);
-                }
+                // if maybe instruction that assigns to variable as first arg
+                if(instr.args.Count > 0 && instr.args[0].paramType == Compiler.ParamType.NumVariable) {
+                    bool isOneOfThese = true;
+                    float result = 0;
 
-                if(instr.name == "call") {
-                    Call(instr.args[0].addressValue);
-                }
+                    switch(instr.name) {
+                        case "pop":
+                            if(stack.Count == 0) {
+                                failReason = "stack empty";
+                                return false;
+                            }
 
-                if(instr.name == "int") {
-                    Interrupt(instr.args[0].stringValue);
-                }
+                            result = stack[stack.Count - 1];
+                            stack.RemoveAt(stack.Count - 1);
+                            break;
+                        case "mov":
+                            result = instr.args[1].floatValue;
+                            break;
+                        default:
+                            isOneOfThese = false;
+                            break;
+                    }
 
-                if(instr.name == "ret") {
-                    if(!Ret()) {
-                        failReason = "no address to return from";
-                        return false;
+                    if(isOneOfThese) {
+                        Compiler.Instruction variable;
+                        if(!this.numVariables.TryGetValue(instr.args[0].stringValue, out variable)) {
+                            failReason = $"couldn't find variable \"{instr.args[0].stringValue}\"";
+                            return false;
+                        }
+
+                        variable.args[0].floatValue = result;
                     }
                 }
 
-                if(
-                    instr.name == "mov"
-                    || instr.name == "add"
-                    || instr.name == "sub"
-                    || instr.name == "mul"
-                    || instr.name == "div"
-                    || instr.name == "abs"
-                    || instr.name == "sqrt"
-                    || instr.name == "pow"
-                    ) {
-                    Compiler.Instruction variable;
-                    if(!this.numVariables.TryGetValue(instr.args[0].stringValue, out variable)) {
-                        failReason = $"couldn't find variable \"{instr.args[0].stringValue}\"";
-                        return false;
-                    }
-
-                    var variableArg = variable.args[0];
-                    var valueArg = instr.args[1];
+                // if might be one arg math instruction
+                if(instr.args.Count == 1 && instr.args[0].paramType == Compiler.ParamType.Num) {
+                    var valueArg = instr.args[0];
+                    float result = 0;
+                    bool isOneOfThese = true;
                     
                     try {
                         switch(instr.name) {
-                            case "mov":
-                                variableArg.floatValue = valueArg.floatValue;
-                                break;
-                            case "add":
-                                variableArg.floatValue += valueArg.floatValue;
-                                break;
-                            case "sub":
-                                variableArg.floatValue -= valueArg.floatValue;
-                                break;
-                            case "mul":
-                                variableArg.floatValue *= valueArg.floatValue;
-                                break;
-                            case "div":
-                                variableArg.floatValue /= valueArg.floatValue;
-                                break;
                             case "abs":
-                                variableArg.floatValue = Mathf.Abs(valueArg.floatValue);
+                                result = Mathf.Abs(valueArg.floatValue);
+                                break;
+                            case "sign":
+                                result = Mathf.Sign(valueArg.floatValue);
                                 break;
                             case "sqrt":
-                                variableArg.floatValue = Mathf.Sqrt(valueArg.floatValue);
+                                result = Mathf.Sqrt(valueArg.floatValue);
                                 break;
-                            case "pow":
-                                variableArg.floatValue = Mathf.Pow(variableArg.floatValue, valueArg.floatValue);
+                            case "round":
+                                result = Mathf.Round(valueArg.floatValue);
+                                break;
+                            case "floor":
+                                result = Mathf.Floor(valueArg.floatValue);
+                                break;
+                            case "ceil":
+                                result = Mathf.Ceil(valueArg.floatValue);
+                                break;
+                            default:
+                                isOneOfThese = false;
                                 break;
                         }
 
-                        if(!float.IsFinite(variableArg.floatValue)) {
-                            failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {variableArg.floatValue}";
-                            return false;
+                        if(isOneOfThese) {
+                            if(!float.IsFinite(result)) {
+                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
+                                return false;
+                            }
+
+                            Compiler.Instruction rslt;
+                            this.numVariables.TryGetValue("rslt", out rslt);
+                            rslt.args[0].floatValue = result;
+                            rslt.args[0].intValue = (int)result;
                         }
                     } catch(Exception e) {
                         failReason = e.ToString();
                         return false;
                     }
-
-                    variableArg.intValue = (int)variableArg.floatValue;
                 }
 
-                if(
-                    instr.name == "je"
-                    || instr.name == "jne"
-                    || instr.name == "jg"
-                    || instr.name == "jge"
-                    || instr.name == "jl"
-                    || instr.name == "jle"
-                    ) {
+                // if might be two arg math instruction
+                if(instr.args.Count == 2 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num) {
+                    var lhsArg = instr.args[0];
+                    var rhsArg = instr.args[1];
+                    float result = 0;
+                    bool isOneOfThese = true;
+                    
+                    try {
+                        switch(instr.name) {
+                            case "add":
+                                result = lhsArg.floatValue + rhsArg.floatValue;
+                                break;
+                            case "sub":
+                                result = lhsArg.floatValue - rhsArg.floatValue;
+                                break;
+                            case "mul":
+                                result = lhsArg.floatValue * rhsArg.floatValue;
+                                break;
+                            case "div":
+                                result = lhsArg.floatValue / rhsArg.floatValue;
+                                break;
+                            case "pow":
+                                result = Mathf.Pow(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            case "min":
+                                result = Mathf.Min(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            case "max":
+                                result = Mathf.Max(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            default:
+                                isOneOfThese = false;
+                                break;
+                        }
+
+                        if(isOneOfThese) {
+                            if(!float.IsFinite(result)) {
+                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
+                                return false;
+                            }
+
+                            Compiler.Instruction rslt;
+                            this.numVariables.TryGetValue("rslt", out rslt);
+                            rslt.args[0].floatValue = result;
+                            rslt.args[0].intValue = (int)result;
+                        }
+                    } catch(Exception e) {
+                        failReason = e.ToString();
+                        return false;
+                    }
+                }
+
+                if(instr.name == "lerp") {
+                    Compiler.Instruction rslt;
+                    this.numVariables.TryGetValue("rslt", out rslt);
+                    rslt.args[0].floatValue = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
+                    rslt.args[0].intValue = (int)rslt.args[0].floatValue;
+                }
+
+                // if might be conditional jump instruction
+                if(instr.args.Count == 3 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num && instr.args[2].paramType == Compiler.ParamType.Address) {
                     float lhs = instr.args[0].floatValue;
                     float rhs = instr.args[1].floatValue;
                     int addr = instr.args[2].addressValue;
                     bool jump = false;
 
                     switch(instr.name) {
+                        case "ja":
+                            jump = Mathf.Approximately(lhs, rhs);
+                            break;
                         case "je":
                             jump = lhs == rhs;
                             break;
                         case "jne":
                             jump = lhs != rhs;
+                            break;
+                        case "jna":
+                            jump = !Mathf.Approximately(lhs, rhs);
                             break;
                         case "jg":
                             jump = lhs > rhs;
@@ -477,6 +576,7 @@ namespace Oxide.Plugins
             float landingSpeed = 0;
             float landingTime;
             float desiredPitch = 0;
+            int waitRF;
 
             public void Reset() {
                 active = false;
@@ -514,7 +614,7 @@ namespace Oxide.Plugins
 
             public bool OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
                 if(item.info.shortname == "note" && item.text != null) {
-                    var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n"}, StringSplitOptions.RemoveEmptyEntries);
+                    var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n", ";"}, StringSplitOptions.RemoveEmptyEntries);
 
                     if(lines.Length >= 1) {
                         if(lines[0] == "#droneasm") {
@@ -762,10 +862,6 @@ namespace Oxide.Plugins
                         SetFlag(Flag.Landing, false);
                         SetFlag(Flag.Flying, false);
                         cpu.Interrupt("landed");
-
-                        if(this.currentInstruction.name == "land") {
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
                     }
                 }
 
@@ -775,10 +871,6 @@ namespace Oxide.Plugins
                     if(offset.magnitude < 1 && copter.rigidBody.velocity.magnitude < 1) {
                         SetFlag(Flag.SeekingTarget, false);
                         cpu.Interrupt("at_target");
-
-                        if(this.currentInstruction.name == "flyto") {
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
                     }
                 }
 
@@ -788,10 +880,6 @@ namespace Oxide.Plugins
                     if(offset.magnitude < 10.0f) {
                         SetFlag(Flag.SeekingTargetFlythrough, false);
                         cpu.Interrupt("almost_at_target");
-
-                        if(this.currentInstruction.name == "flythrough") {
-                            SetFlag(Flag.ExecutingInstruction, false);
-                        }
                     }
                 }
 
@@ -803,7 +891,7 @@ namespace Oxide.Plugins
                 }
 
                 // this checks if the executing instruction has finished
-                if(this.currentInstruction != null) {
+                if(this.currentInstruction != null && HasFlag(Flag.ExecutingInstruction)) {
                     switch(this.currentInstruction.name) {
                         case "sleep":
                             if(Time.fixedTime > this.sleepTime) {
@@ -818,12 +906,34 @@ namespace Oxide.Plugins
                             }
 
                             break;
+                        case "waitrf":
+                            if(DroneManager.activeFrequencies.Contains(this.waitRF)) {
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
+                        case "land":
+                            if(!HasFlag(Flag.Landing)) {
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
+                        case "flyto":
+                            if(!HasFlag(Flag.SeekingTarget)) {
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
+                        case "flythrough":
+                            if(!HasFlag(Flag.SeekingTargetFlythrough)) {
+                                SetFlag(Flag.ExecutingInstruction, false);
+                            }
+
+                            break;
                     }
                 }
 
                 if(cpu.HandlePendingInterrupt()) {
-                    // will it be a problem restarting the unfinished instruction afterward?
-                    // it definitely will affect "sleep"
                     SetFlag(Flag.ExecutingInstruction, false);
                 }
 
@@ -1082,6 +1192,10 @@ namespace Oxide.Plugins
                             }
 
                             break;
+                        case "waitrf":
+                            this.waitRF = currentInstruction.args[0].intValue;
+                            SetFlag(Flag.ExecutingInstruction, true);
+                            break;
                         default:
                             isFlightInstruction = false;
                             break;
@@ -1225,6 +1339,9 @@ namespace Oxide.Plugins
             }
 
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
+                // for debugging
+                {"print", new Param[] { new Param("text", ParamType.Identifier), new Param("number", ParamType.Num) }},
+
                 {"label", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"isr", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"jmp", new Param[] { new Param("label_name", ParamType.Address) }},
@@ -1232,20 +1349,33 @@ namespace Oxide.Plugins
                 {"int", new Param[] { new Param("isr_name", ParamType.Identifier) }},
                 {"ret", new Param[] {  }},
                 {"nop", new Param[] {  }},
+                {"num", new Param[] { new Param("var_name_decl", ParamType.Identifier) }},
+                {"push", new Param[] { new Param("value", ParamType.Num) }},
 
-                {"num", new Param[] { new Param("name", ParamType.Identifier) }},
+                {"pop", new Param[] { new Param("var_name", ParamType.NumVariable) }},
+                {"mov", new Param[] { new Param("dest/lhs", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
 
-                {"mov", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"add", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"sub", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"mul", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"div", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"abs", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"sqrt", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
-                {"pow", new Param[] { new Param("dest", ParamType.NumVariable), new Param("rhs", ParamType.Num) }},
+                {"lerp", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("t", ParamType.Num) }},
 
+                {"add", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"sub", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"mul", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"div", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"pow", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"min", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+                {"max", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num) }},
+
+                {"abs", new Param[] { new Param("value", ParamType.Num) }},
+                {"sign", new Param[] { new Param("value", ParamType.Num) }},
+                {"sqrt", new Param[] { new Param("value", ParamType.Num) }},
+                {"floor", new Param[] { new Param("value", ParamType.Num) }},
+                {"ceil", new Param[] { new Param("value", ParamType.Num) }},
+                {"round", new Param[] { new Param("value", ParamType.Num) }},
+
+                {"ja", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
                 {"je", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
                 {"jne", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
+                {"jna", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
                 {"jg", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
                 {"jge", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
                 {"jl", new Param[] { new Param("lhs", ParamType.Num), new Param("rhs", ParamType.Num), new Param("label_name", ParamType.Address) }},
@@ -1262,6 +1392,7 @@ namespace Oxide.Plugins
                 {"flyto", new Param[] { }},
                 {"flythrough", new Param[] { }},
                 {"drop", new Param[] { new Param("slot", ParamType.Num) }},
+                {"waitrf", new Param[] { new Param("frequency", ParamType.Num) }},
 
                 {"pushtarget", new Param[] {  }},
                 {"poptarget", new Param[] {  }},
@@ -1294,6 +1425,9 @@ namespace Oxide.Plugins
                 for(int i = 0; i < 8; i++) {
                     variables.Add("r" + i, new Variable { name = "r" + i, type = ParamType.NumVariable});
                 }
+                
+                // result register for math instructions
+                variables.Add("rslt", new Variable { name = "rslt", type = ParamType.NumVariable});
 
                 for(int i = 0; i < instructions.Count; i++) {
                     var instr = instructions[i];
@@ -1506,8 +1640,7 @@ namespace Oxide.Plugins
             });
         }
 
-        void Loaded()
-        {
+        void Loaded() {
             plugin = this;
 
             permission.RegisterPermission(calibratePerm, this);
@@ -1536,10 +1669,154 @@ namespace Oxide.Plugins
 
                 ProcessMiniCopter(miniCopter, storage);
             }
+
+            var compiler = new Compiler();
+            var cpu = new DroneCPU();
+
+            bool success = compiler.Compile(@"
+            num reason
+
+            num x
+            num y
+            num z
+            num a
+            num b
+            num c
+
+            mov reason 0
+            mov x 1
+            mov y 2
+            mov z 3
+
+            jne x 1 failed
+            jne y 2 failed
+            jne z 3 failed
+            jna x 1 failed
+            jna y 2 failed
+            jna z 3 failed
+
+            mov reason 1
+            push x
+            push y
+            push z
+
+            pop r0
+            pop r1
+            pop r2
+
+            jne r0 3 failed
+            jne r1 2 failed
+            jne r2 1 failed
+
+            mov reason 2
+            je 1 1.1 failed
+            ja 1 1.1 failed
+            jl 1.1 1 failed
+            jle 1.1 1 failed
+            jg 1 1.1 failed
+            jge 1 1.1 failed
+
+            mov reason 3
+            #oops
+
+            mov reason 4
+            add 1 2
+            jne rslt 3 failed
+            sub 1 2
+            jne rslt -1 failed
+            mul 7 7
+            jne rslt 49 failed
+            div 27 3
+            jne rslt 9 failed
+            pow 5 2
+            jne rslt 25 failed
+            min 3 2
+            jne 2 rslt failed
+            max 3 2
+            jne rslt 3 failed
+
+            mov reason 5
+            sqrt 49
+            jne rslt 7 failed
+            abs -1
+            jne rslt 1 failed
+            floor 1.9999
+            jne rslt 1 failed
+            ceil 1.0001
+            jne rslt 2 failed
+            round 1.4999
+            jne rslt 1 failed
+            sign -3.14
+            jne rslt -1 failed
+
+            mov reason 6
+            push 1
+            push 2
+            push 3
+            call vec_length
+            print length r0
+
+            #3.74165738677394
+            mov reason 7
+            jna r0 3.741657 failed
+
+            mov reason 8
+            jne r0 3.74165738 failed
+
+            mov reason 9
+            lerp 1 2 0.5
+            #jne rslt 1.5 failed
+            
+            jmp end
+
+            label failed
+                print failed reason
+
+            label vec_length
+                num sum
+                mov sum 0
+                pop r0
+                pop r1
+                pop r2
+                mul r0 r0
+                add sum rslt
+                mov sum rslt
+                mul r1 r1
+                add sum rslt
+                mov sum rslt
+                mul r2 r2
+                add sum rslt
+                mov sum rslt
+                sqrt sum
+                mov r0 rslt
+                ret
+
+            label end
+            print success 0
+            ");
+
+            if(!success) {
+                foreach(var error in compiler.errors) {
+                    Print(error);
+                }
+            } else {
+                cpu.LoadInstructions(compiler.instructions);
+
+                for(int i = 0; i < 100; i++) {
+                    string reason;
+                    Compiler.Instruction instruction;
+                    if(cpu.Cycle(out instruction, out reason)) {
+
+                    } else {
+                        Print(reason);
+                        break;
+                    }
+                }
+                
+            }
         }
 
-        void Unload()
-        {
+        void Unload() {
             Cleanup();
         }
 
