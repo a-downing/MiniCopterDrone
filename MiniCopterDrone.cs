@@ -24,13 +24,16 @@ namespace Oxide.Plugins
             public Vector3 gridPositionCorrection;
             [JsonProperty(PropertyName = "maxInstructionsPerFixedUpdate")]
             public int maxInstructionsPerFixedUpdate;
+            [JsonProperty(PropertyName = "gridSize")]
+            public float gridSize;
         }
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
                 maxProgramInstructions = 128,
                 gridPositionCorrection = new Vector3(1, 0, 75),
-                maxInstructionsPerFixedUpdate = 32
+                maxInstructionsPerFixedUpdate = 32,
+                gridSize = 146.33f
             };
 
             Config.WriteObject(config, true);
@@ -1184,7 +1187,6 @@ namespace Oxide.Plugins
         }
 
         static bool TryMapGridToPosition(string coord, out Vector3 result, bool useCorrection = true) {
-             const float gridSize = 146.33f;
              float mapSize = ConVar.Server.worldsize;
             
             if(coord.Length <= 4) {
@@ -1199,8 +1201,8 @@ namespace Oxide.Plugins
                     float row;
                     float.TryParse(numberWholeStr, out row);
 
-                    float x = letterNumber * gridSize - (mapSize / 2);
-                    float y = -row * gridSize + (mapSize / 2);
+                    float x = letterNumber * config.gridSize - (mapSize / 2);
+                    float y = -row * config.gridSize + (mapSize / 2);
 
                     result = new Vector3(x, 0, y);
 
@@ -1217,11 +1219,9 @@ namespace Oxide.Plugins
         }
 
         static Vector3 MapGridToPosition(float col, float row, bool useCorrection = true) {
-             const float gridSize = 146.33f;
-             float mapSize = ConVar.Server.worldsize;
-
-            float x = col * gridSize - (mapSize / 2);
-            float y = -row * gridSize + (mapSize / 2);
+            float mapSize = ConVar.Server.worldsize;
+            float x = col * config.gridSize - (mapSize / 2);
+            float y = -row * config.gridSize + (mapSize / 2);
 
             var result = new Vector3(x, 0, y);
 
