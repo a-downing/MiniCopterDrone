@@ -1595,7 +1595,7 @@ namespace Oxide.Plugins
 
             void Tokenize(string code) {
                 tokens.Clear();
-                var lines = code.Split(new[] {"\r\n", "\r", "\n"}, StringSplitOptions.RemoveEmptyEntries);
+                var lines = code.Split(new[] {"\r\n", "\r", "\n", ";"}, StringSplitOptions.RemoveEmptyEntries);
 
                 for(int i = 0; i < lines.Length; i++) {
                     lines[i] = code = Regex.Replace(lines[i].Trim() ,@"\s+"," ");
@@ -1676,12 +1676,8 @@ namespace Oxide.Plugins
             bool success = compiler.Compile(@"
             num reason
 
-            num x
-            num y
-            num z
-            num a
-            num b
-            num c
+            num x; num y; num z
+            num a; num b; num c
 
             mov reason 0
             mov x 1
