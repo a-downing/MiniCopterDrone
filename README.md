@@ -5,7 +5,7 @@
 To activate the drone drag a note containing instructions into the wooden box (may be invisible) under the tail.
 
 #### Note format:
-The first line must be #droneasm and one line per instruction comments start with # and continue to the end of the line
+The first line must be #droneasm, instructions are separated by newlines or a semicolon, comments start with # and continue to the end of the line
 Example:
 ```
 #droneasm
@@ -23,12 +23,12 @@ ___
 `target <map_col> <map_row> <altitude_in_meters>`
 
 targets a point of the map. For example to target the center of grid A0 50 meters above the terrain:
+`target A.5 0.5 50`
+___
 
 `sleep <seconds>`
 
 Pause execution for the given number of seconds (interrupts can still be caught)
-   
-`target A.5 0.5 50`
 ___
 `targetalt <altitude_in_meters>`
 
@@ -40,15 +40,15 @@ target the current position and altitude of the minicopter
 ___
 `targetrf <frequency>`
 
-target the position of the closest broadcasting transmitter on the given frequency, if none, the current target is unaffected.
+target the position of the closest broadcasting transmitter on the given frequency, if none, the current target is unaffected
 ___
 `flyto <pitch_angle>`
 
-Fly to the current target at the provided pitch angle. The instruction finishes when the target is reached.
+Fly to the current target at the provided pitch angle. The instruction finishes when the target is reached
 ___
 `flythrough <pitch_angle>`
 
-Fly to the current target at the provided pitch angle. The instruction finishes when 10 meters from the target.
+Fly to the current target at the provided pitch angle. The instruction finishes when 10 meters from the target
 ___
 `land <speed>`
 
@@ -56,11 +56,15 @@ Land at `<speed>` meters per second
 ___
 `drop <slot_number>`
 
-Drop the item in slot number `<slot_number>` (in the wooden box). The top left slot is 0, botton right is 11.
+Drop the item in slot number `<slot_number>` (in the wooden box). The top left slot is 0, botton right is 11
+___
+`waitrf <frequency>`
+
+Pause until an RF broadcaster transmits on frequency `<frequency>`
 ___
 
 #### Advanced Instructions
-These instructions don't directly affect the flight of the minicopter, but are for program control flow.
+These instructions don't directly affect the flight of the minicopter, but are for program control flow
 
 `label <label_name>`
 
