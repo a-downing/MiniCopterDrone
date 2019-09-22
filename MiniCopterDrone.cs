@@ -187,7 +187,7 @@ namespace Oxide.Plugins
             int pic = 0;
             bool abort = false;
             string abortReason = null;
-            Dictionary<string, Compiler.Instruction> numVariables = new Dictionary<string, Compiler.Instruction>();
+            Dictionary<string, Compiler.Instruction.Argument> numVariables = new Dictionary<string, Compiler.Instruction.Argument>();
             List<float> stack = new List<float>();
             public int maxStackSize = 64;
 
@@ -213,33 +213,8 @@ namespace Oxide.Plugins
                     if(instr.name == "isr") {
                         isrs.Add(instr.args[0].stringValue, i);
                     } else if(instr.name == "num") {
-                        numVariables.Add(instr.args[0].stringValue, instr);
+                        numVariables.Add(instr.args[0].stringValue, instr.args[0]);
                     }
-                }
-
-                for(int i = 0; i < 9; i++) {
-                    string varName;
-
-                    if(i == 0) {
-                        varName = "rslt";
-                    } else {
-                        varName = "r" + (i - 1);
-                    }
-
-                    var instruction = new Compiler.Instruction(varName);
-
-                    instruction.args.Add(new Compiler.Instruction.Argument {
-                        name = null,
-                        paramType = Compiler.ParamType.NumVariable,
-                        argType = Compiler.ParamType.NumVariable,
-                        rawValue = null,
-                        addressValue = 0,
-                        floatValue = 0,
-                        intValue = 0,
-                        stringValue = null
-                    });
-
-                    numVariables.Add(instruction.name, instruction);
                 }
             }
 
@@ -270,10 +245,10 @@ namespace Oxide.Plugins
             }
 
             public bool WriteVariable(string name, float value) {
-                Compiler.Instruction instr;
-                if(numVariables.TryGetValue(name, out instr)) {
-                    instr.args[0].floatValue = value;
-                    instr.args[0].intValue = (int)value;
+                Compiler.Instruction.Argument arg;
+                if(numVariables.TryGetValue(name, out arg)) {
+                    arg.floatValue = value;
+                    arg.intValue = (int)value;
                     return true;
                 }
 
@@ -313,23 +288,12 @@ namespace Oxide.Plugins
 
                 instr = instructions[pic++];
 
-                for(int i = 0; i < instr.args.Count; i++) {
-                    var arg = instr.args[i];
-
-                    if(arg.paramType == Compiler.ParamType.Num && arg.argType == Compiler.ParamType.NumVariable) {
-                        Compiler.Instruction variable;
-                        numVariables.TryGetValue(arg.stringValue, out variable);
-                        arg.floatValue = variable.args[0].floatValue;
-                        arg.intValue = variable.args[0].intValue;
-                    }
-                }
-
                 switch(instr.name) {
                     case "jmp":
-                        Jump(instr.args[0].addressValue);
+                        Jump(instr.args[0].intValue);
                         break;
                     case "call":
-                        Call(instr.args[0].addressValue);
+                        Call(instr.args[0].intValue);
                         break;
                     case "int":
                         Interrupt(instr.args[0].stringValue);
@@ -375,9 +339,8 @@ namespace Oxide.Plugins
                     }
 
                     if(isOneOfThese) {
-                        Compiler.Instruction variable;
-                        this.numVariables.TryGetValue(instr.args[0].stringValue, out variable);
-                        variable.args[0].floatValue = result;
+                        instr.args[0].floatValue = result;
+                        instr.args[0].intValue = (int)result;
                     }
                 }
 
@@ -418,10 +381,7 @@ namespace Oxide.Plugins
                                 return false;
                             }
 
-                            Compiler.Instruction rslt;
-                            this.numVariables.TryGetValue("rslt", out rslt);
-                            rslt.args[0].floatValue = result;
-                            rslt.args[0].intValue = (int)result;
+                            WriteVariable("rslt", result);
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -470,10 +430,7 @@ namespace Oxide.Plugins
                                 return false;
                             }
 
-                            Compiler.Instruction rslt;
-                            this.numVariables.TryGetValue("rslt", out rslt);
-                            rslt.args[0].floatValue = result;
-                            rslt.args[0].intValue = (int)result;
+                            WriteVariable("rslt", result);
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -482,17 +439,15 @@ namespace Oxide.Plugins
                 }
 
                 if(instr.name == "lerp") {
-                    Compiler.Instruction rslt;
-                    this.numVariables.TryGetValue("rslt", out rslt);
-                    rslt.args[0].floatValue = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
-                    rslt.args[0].intValue = (int)rslt.args[0].floatValue;
+                    float result = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
+                    WriteVariable("rslt", result);
                 }
 
                 // if might be conditional jump instruction
                 if(instr.args.Count == 3 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num && instr.args[2].paramType == Compiler.ParamType.Address) {
                     float lhs = instr.args[0].floatValue;
                     float rhs = instr.args[1].floatValue;
-                    int addr = instr.args[2].addressValue;
+                    int addr = instr.args[2].intValue;
                     bool jump = false;
 
                     switch(instr.name) {
@@ -1283,10 +1238,42 @@ namespace Oxide.Plugins
                     public ParamType paramType;
                     public ParamType argType;
                     public string rawValue;
-                    public int addressValue;
-                    public int intValue;
-                    public float floatValue;
                     public string stringValue;
+                    public Argument variableReference = null;
+
+                    private int _intValue;
+                    public int intValue {
+                        get {
+                            if(variableReference == null) {
+                                return _intValue;
+                            } else {
+                                return variableReference._intValue;
+                            }
+                        } set {
+                            if(variableReference == null) {
+                                _intValue = value;
+                            } else {
+                                variableReference._intValue = value;
+                            }
+                        }
+                    }
+
+                    private float _floatValue;
+                    public float floatValue {
+                        get {
+                            if(variableReference == null) {
+                                return _floatValue;
+                            } else {
+                                return variableReference._floatValue;
+                            }
+                        } set {
+                            if(variableReference == null) {
+                                _floatValue = value;
+                            } else {
+                                variableReference._floatValue = value;
+                            }
+                        }
+                    }
                 }
 
                 public string name;
@@ -1310,11 +1297,6 @@ namespace Oxide.Plugins
                     this.name = name;
                     this.type = type;
                 }
-            }
-
-            class Variable {
-                public string name;
-                public ParamType type;
             }
 
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
@@ -1390,20 +1372,20 @@ namespace Oxide.Plugins
 
                 Tokenize(code);
 
+                // registers r0 - r7
+                for(int i = 0; i < 8; i++) {
+                    tokens.Add(new string[]{"num", "r" + i});
+                }
+
+                // rslt register
+                tokens.Add(new string[]{"num", "rslt"});
+
                 if(!Parse()) {
                     return false;
                 }
 
                 var labelAddresses = new Dictionary<string, int>();
-                var variables = new Dictionary<string, Variable>();
-
-                // registers r0 - r7
-                for(int i = 0; i < 8; i++) {
-                    variables.Add("r" + i, new Variable { name = "r" + i, type = ParamType.NumVariable});
-                }
-                
-                // result register for math instructions
-                variables.Add("rslt", new Variable { name = "rslt", type = ParamType.NumVariable});
+                var variables = new Dictionary<string, Instruction.Argument>();
 
                 for(int i = 0; i < instructions.Count; i++) {
                     var instr = instructions[i];
@@ -1421,7 +1403,7 @@ namespace Oxide.Plugins
                             return false;
                         }
 
-                        variables.Add(arg.stringValue, new Variable {name = arg.stringValue, type = ParamType.NumVariable});
+                        variables.Add(arg.stringValue, arg);
                     }
                 }
 
@@ -1432,18 +1414,25 @@ namespace Oxide.Plugins
                         var arg = instr.args[j];
 
                         if(arg.paramType == ParamType.Address) {
-                            if(!labelAddresses.TryGetValue(arg.stringValue, out arg.addressValue)) {
+                            int addr;
+        
+                            if(!labelAddresses.TryGetValue(arg.stringValue, out addr)) {
                                 var message = plugin.lang.GetMessage("invalid_label", plugin);
                                 errors.Add(string.Format(message, i, arg.stringValue));
                                 return false;
                             }
+
+                            arg.intValue = addr;
                         }
 
                         if(arg.argType == ParamType.NumVariable) {
-                            if(!variables.ContainsKey(arg.stringValue)) {
+                            Instruction.Argument variableArg;
+                            if(!variables.TryGetValue(arg.stringValue, out variableArg)) {
                                 var message = plugin.lang.GetMessage("var_not_declared", plugin);
                                 errors.Add(string.Format(message, i, arg.stringValue));
                                 return false;
+                            } else {
+                                arg.variableReference = variableArg;
                             }
                         }
 
@@ -1465,16 +1454,15 @@ namespace Oxide.Plugins
 
                 Action<string> fail = (string arg) => {
                     var message = plugin.lang.GetMessage("invalid_arg", plugin);
-                    errors.Add(string.Format(message, line, arg, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
+                    errors.Add(string.Format(message, line, arg, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                 };
 
-                Action<int, float, int, int, string, ParamType> addArgument = (int index, float floatValue, int intValue, int addressValue, string stringValue, Compiler.ParamType argType) => {
+                Action<int, float, int, string, ParamType> addArgument = (int index, float floatValue, int intValue, string stringValue, Compiler.ParamType argType) => {
                     compiledInstruction.args.Add(new Instruction.Argument {
                         name = parameters[index].name,
                         paramType = parameters[index].type,
                         argType = argType,
                         rawValue = args[index],
-                        addressValue = addressValue,
                         floatValue = floatValue,
                         intValue = intValue,
                         stringValue = stringValue
@@ -1496,7 +1484,7 @@ namespace Oxide.Plugins
                         }
 
                         if(matchNumVar.Success) {
-                            addArgument(i, 0, 0, 0, arg, ParamType.NumVariable);
+                            addArgument(i, 0, 0, arg, ParamType.NumVariable);
                         } else if(match.Success) {
                             if(match.Groups[0].ToString() == ".") {
                                 fail(arg);
@@ -1509,7 +1497,7 @@ namespace Oxide.Plugins
                                 return false;
                             }
 
-                            addArgument(i, value, (int)value, 0, arg, param.type);
+                            addArgument(i, value, (int)value, arg, param.type);
                         } else if(matchMapGridCol.Success) {
                             var lettersStr = matchMapGridCol.Groups[1].ToString().ToUpper();
                             var lettersFractionStr = matchMapGridCol.Groups[2].ToString();
@@ -1526,7 +1514,7 @@ namespace Oxide.Plugins
 
                             var value = lettersWhole + lettersFraction;
                             
-                            addArgument(i, value, (int)value, 0, arg, param.type);
+                            addArgument(i, value, (int)value, arg, param.type);
                         }
                     }
 
@@ -1538,7 +1526,7 @@ namespace Oxide.Plugins
                             return false;
                         }
                         
-                        addArgument(i, 0, 0, 0, arg, param.type);
+                        addArgument(i, 0, 0, arg, param.type);
                     }
                 }
 
@@ -1564,7 +1552,7 @@ namespace Oxide.Plugins
 
                     if(parameters.Length != line.Length - 1) {
                         var message = plugin.lang.GetMessage("wrong_num_args", plugin);
-                        errors.Add(string.Format(message, i, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
+                        errors.Add(string.Format(message, i, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                         return false;
                     }
 
