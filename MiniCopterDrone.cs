@@ -752,7 +752,7 @@ namespace Oxide.Plugins
                 }
 
                 if(!copter.HasFuel()) {
-                    StopEngine();
+                    //StopEngine();
                 }
 
                 if(HasFlag(Flag.EngineStarting) && Time.fixedTime > engineStartTime + 5.0f) {
@@ -1508,7 +1508,6 @@ namespace Oxide.Plugins
 
                 Action<string> fail = (string arg) => {
                     var message = plugin.lang.GetMessage("invalid_arg", plugin);
-                    //"line {0}: invalid argument ({1}) for ({2}) spec: {2} {3}"
                     errors.Add(string.Format(message, line, arg, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                 };
 
@@ -1848,6 +1847,15 @@ namespace Oxide.Plugins
                 // elapsed: 100000000 in 14.94202s (6692537 instructions/s)
             }*/
 
+            // if the plugin crashes or something before Unload is called
+            /*var list2 = GameObject.FindObjectsOfType<MonoBehaviour>();
+            for(int i = list2.Length - 1; i >= 0; i--) {
+                var ent = list2[i];
+                if(ent.name == DroneManager.Guid) {
+                    GameObject.Destroy(ent);
+                }
+            }*/
+
             var compiler = new Compiler();
             var success = compiler.Compile(@"
             #droneasm
@@ -1870,7 +1878,7 @@ namespace Oxide.Plugins
             }
 
             for(int i = 0; i < 50; i++) {
-                var position = new Vector3(UnityEngine.Random.Range(-100, 100), 0, UnityEngine.Random.Range(-100, 100));
+                var position = new Vector3(UnityEngine.Random.Range(-500, 500), 0, UnityEngine.Random.Range(-500, 500));
                 position.y = TerrainMeta.HeightMap.GetHeight(position) + 50;
                 var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
                 miniCopter.Spawn();
@@ -1883,6 +1891,11 @@ namespace Oxide.Plugins
         }
 
         void Unload() {
+            var list = GameObject.FindObjectsOfType<MiniCopter>();
+            for(int i = list.Length - 1; i >= 0; i--) {
+                list[i].Kill();
+            }
+
             if(droneManager) {
                 GameObject.Destroy(droneManager);
             }
