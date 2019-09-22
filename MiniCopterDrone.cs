@@ -135,6 +135,7 @@ namespace Oxide.Plugins
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
             List<int> removeActiveList = new List<int>();
             List<int> removeDroneList = new List<int>();
+            int counter = 0;
 
             void FixedUpdate() {
                 var startTime = Time.realtimeSinceStartup;
@@ -186,6 +187,15 @@ namespace Oxide.Plugins
                 foreach(var id in removeDroneList) {
                     drones.Remove(id);
                 }
+
+                float elapsedTime = Time.realtimeSinceStartup - startTime;
+                benchmarker.Update("DroneManager.FixedUpdate", elapsedTime);
+
+                if(counter % Mathf.RoundToInt(1 / Time.fixedDeltaTime) == 0) {
+                    benchmarker.Report();
+                }
+
+                counter++;
             }
 
             public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
@@ -1684,7 +1694,7 @@ namespace Oxide.Plugins
                 ProcessMiniCopter(miniCopter, storage);
             }
 
-            var compiler = new Compiler();
+            /*var compiler = new Compiler();
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
@@ -1836,9 +1846,9 @@ namespace Oxide.Plugins
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
                 // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
                 // elapsed: 100000000 in 14.94202s (6692537 instructions/s)
-            }
+            }*/
 
-            /*var compiler = new Compiler();
+            var compiler = new Compiler();
             var success = compiler.Compile(@"
             #droneasm
             startengine
@@ -1859,8 +1869,8 @@ namespace Oxide.Plugins
                 return;
             }
 
-            for(int i = 0; i < 20; i++) {
-                var position = new Vector3(UnityEngine.Random.Range(-1000, 1000), 0, UnityEngine.Random.Range(-1000, 1000));
+            for(int i = 0; i < 50; i++) {
+                var position = new Vector3(UnityEngine.Random.Range(-100, 100), 0, UnityEngine.Random.Range(-100, 100));
                 position.y = TerrainMeta.HeightMap.GetHeight(position) + 50;
                 var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
                 miniCopter.Spawn();
@@ -1869,7 +1879,7 @@ namespace Oxide.Plugins
                 drone.cpu.LoadInstructions(compiler.instructions);
                 drone.SetFlag(Drone.Flag.EngineOn, true);
                 drone.active = true;
-            }*/
+            }
         }
 
         void Unload() {
