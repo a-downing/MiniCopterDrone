@@ -340,31 +340,42 @@ namespace Oxide.Plugins
                     Print($"cpu print: {instr.args[0].rawValue} {instr.args[1].floatValue}");
                 }
 
-                switch(instr.name) {
-                    case "jmp":
-                        Jump(instr.args[0].intValue);
-                        break;
-                    case "call":
-                        Call(instr.args[0].intValue);
-                        break;
-                    case "int":
-                        Interrupt(instr.args[0].stringValue);
-                        break;
-                    case "ret":
-                        if(!Ret()) {
-                            failReason = "no address to return from";
-                            return false;
-                        }
+                if(instr.args.Count == 1) {
+                    bool isOneOfThese = true;
+                    switch(instr.name) {
+                        case "jmp":
+                            Jump(instr.args[0].intValue);
+                            break;
+                        case "call":
+                            Call(instr.args[0].intValue);
+                            break;
+                        case "int":
+                            Interrupt(instr.args[0].stringValue);
+                            break;
+                        case "ret":
+                            if(!Ret()) {
+                                failReason = "no address to return from";
+                                return false;
+                            }
 
-                        break;
-                    case "push":
-                        if(stack.Count == maxStackSize) {
-                            failReason = $"maximum stack size exceeded ({maxStackSize})";
-                            return false;
-                        }
+                            break;
+                        case "push":
+                            if(stack.Count == maxStackSize) {
+                                failReason = $"maximum stack size exceeded ({maxStackSize})";
+                                return false;
+                            }
 
-                        stack.Add(instr.args[0].floatValue);
-                        break;
+                            stack.Add(instr.args[0].floatValue);
+                            break;
+                        default:
+                            isOneOfThese = false;
+                            break;
+                    }
+
+                    if(isOneOfThese) {
+                        failReason = null;
+                        return true;
+                    }
                 }
 
                 // if maybe instruction that assigns to variable as first arg
@@ -393,6 +404,8 @@ namespace Oxide.Plugins
                     if(isOneOfThese) {
                         instr.args[0].floatValue = result;
                         instr.args[0].intValue = (int)result;
+                        failReason = null;
+                        return true;
                     }
                 }
 
@@ -434,6 +447,8 @@ namespace Oxide.Plugins
                             }
 
                             WriteVariable("rslt", result);
+                            failReason = null;
+                            return true;
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -483,6 +498,8 @@ namespace Oxide.Plugins
                             }
 
                             WriteVariable("rslt", result);
+                            failReason = null;
+                            return true;
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -493,6 +510,8 @@ namespace Oxide.Plugins
                 if(instr.name == "lerp") {
                     float result = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
                     WriteVariable("rslt", result);
+                    failReason = null;
+                    return true;
                 }
 
                 // if might be conditional jump instruction
@@ -531,6 +550,8 @@ namespace Oxide.Plugins
 
                     if(jump) {
                         Jump(addr);
+                        failReason = null;
+                        return true;
                     }
                 }
 
@@ -1693,7 +1714,7 @@ namespace Oxide.Plugins
                 ProcessMiniCopter(miniCopter, storage);
             }
 
-            /*var compiler = new Compiler();
+            var compiler = new Compiler();
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
@@ -1845,7 +1866,7 @@ namespace Oxide.Plugins
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
                 // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
                 // elapsed: 100000000 in 14.94202s (6692537 instructions/s)
-            }*/
+            }
 
             // if the plugin crashes or something before Unload is called
             /*var list2 = GameObject.FindObjectsOfType<MonoBehaviour>();
@@ -1856,7 +1877,7 @@ namespace Oxide.Plugins
                 }
             }*/
 
-            var compiler = new Compiler();
+            /*var compiler = new Compiler();
             var success = compiler.Compile(@"
             #droneasm
             startengine
@@ -1887,7 +1908,7 @@ namespace Oxide.Plugins
                 drone.cpu.LoadInstructions(compiler.instructions);
                 drone.SetFlag(Drone.Flag.EngineOn, true);
                 drone.active = true;
-            }
+            }*/
         }
 
         void Unload() {
