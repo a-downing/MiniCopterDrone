@@ -1720,7 +1720,7 @@ namespace Oxide.Plugins
                 ProcessMiniCopter(miniCopter, storage);
             }
 
-            var compiler = new Compiler();
+            /*var compiler = new Compiler();
             var cpu = new DroneCPU();
 
             bool success = compiler.Compile(@"
@@ -1871,15 +1871,15 @@ namespace Oxide.Plugins
                 var endTime = Time.realtimeSinceStartup;
                 Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
                 // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
-            }
+            }*/
 
-            /*var compiler = new Compiler();
+            var compiler = new Compiler();
             var success = compiler.Compile(@"
             #droneasm
             startengine
             settarget -1 0 0 0
-            setalt -1 60
-            setpitch 30
+            setalt -1 50
+            setpitch 35
             flythrough
 
             label loop
@@ -1894,8 +1894,9 @@ namespace Oxide.Plugins
                 return;
             }
 
-            for(int i = 0; i < 100; i++) {
-                var position = new Vector3(UnityEngine.Random.Range(-1000, 1000), 200, UnityEngine.Random.Range(-1000, 1000));
+            for(int i = 0; i < 200; i++) {
+                var position = new Vector3(UnityEngine.Random.Range(-1000, 1000), 0, UnityEngine.Random.Range(-1000, 1000));
+                position.y = TerrainMeta.HeightMap.GetHeight(position) + 50;
                 var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
                 miniCopter.Spawn();
                 var storage = ProcessMiniCopter(miniCopter, null);
@@ -1903,7 +1904,7 @@ namespace Oxide.Plugins
                 drone.cpu.LoadInstructions(compiler.instructions);
                 drone.SetFlag(Drone.Flag.EngineOn, true);
                 drone.active = true;
-            }*/
+            }
         }
 
         void Unload() {
