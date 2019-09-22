@@ -1241,34 +1241,36 @@ namespace Oxide.Plugins
                     public string stringValue;
                     public Argument variableReference = null;
 
+                    private int _intValue;
                     public int intValue {
                         get {
                             if(variableReference == null) {
-                                return intValue;
+                                return _intValue;
                             } else {
-                                return variableReference.intValue;
+                                return variableReference._intValue;
                             }
                         } set {
                             if(variableReference == null) {
-                                intValue = value;
+                                _intValue = value;
                             } else {
-                                variableReference.intValue = value;
+                                variableReference._intValue = value;
                             }
                         }
                     }
 
+                    private float _floatValue;
                     public float floatValue {
                         get {
                             if(variableReference == null) {
-                                return floatValue;
+                                return _floatValue;
                             } else {
-                                return variableReference.floatValue;
+                                return variableReference._floatValue;
                             }
                         } set {
                             if(variableReference == null) {
-                                floatValue = value;
+                                _floatValue = value;
                             } else {
-                                variableReference.floatValue = value;
+                                variableReference._floatValue = value;
                             }
                         }
                     }
@@ -1452,7 +1454,7 @@ namespace Oxide.Plugins
 
                 Action<string> fail = (string arg) => {
                     var message = plugin.lang.GetMessage("invalid_arg", plugin);
-                    errors.Add(string.Format(message, line, arg, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
+                    errors.Add(string.Format(message, line, arg, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                 };
 
                 Action<int, float, int, string, ParamType> addArgument = (int index, float floatValue, int intValue, string stringValue, Compiler.ParamType argType) => {
@@ -1550,7 +1552,7 @@ namespace Oxide.Plugins
 
                     if(parameters.Length != line.Length - 1) {
                         var message = plugin.lang.GetMessage("wrong_num_args", plugin);
-                        errors.Add(string.Format(message, i, instr, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
+                        errors.Add(string.Format(message, i, instr, String.Join(" ", parameters.Select(x => x.name + ':' + x.type))));
                         return false;
                     }
 
