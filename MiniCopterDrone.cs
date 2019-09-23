@@ -126,6 +126,326 @@ namespace Oxide.Plugins
             Interface.Oxide.LogInfo(str, new object[]{});
         }
 
+        static bool TryMapGridToPosition(string coord, out Vector3 result, bool useCorrection = true) {
+             float mapSize = ConVar.Server.worldsize;
+            
+            if(coord.Length <= 4) {
+                var match = Regex.Match(coord, @"^([A-Za-z]{1,2})([0-9]{1,2})$");
+
+                if(match.Success && match.Groups.Count == 3) {
+                    var groups = match.Groups;
+                    string letter = groups[1].ToString().ToUpper();
+                    string numberWholeStr = groups[2].ToString();
+
+                    int letterNumber = (letter.Length == 1) ? letter[0] - 'A' : letter[1] + 26 - 'A';
+                    float row;
+                    float.TryParse(numberWholeStr, out row);
+
+                    float x = letterNumber * config.gridSize - (mapSize / 2);
+                    float y = -row * config.gridSize + (mapSize / 2);
+
+                    result = new Vector3(x, 0, y);
+
+                    if(useCorrection) {
+                        result += config.gridPositionCorrection;
+                    }
+
+                    return true;
+                }
+            }
+
+            result = new Vector2();
+            return false;
+        }
+
+        static Vector3 MapGridToPosition(float col, float row, bool useCorrection = true) {
+            float mapSize = ConVar.Server.worldsize;
+            float x = col * config.gridSize - (mapSize / 2);
+            float y = -row * config.gridSize + (mapSize / 2);
+
+            var result = new Vector3(x, 0, y);
+
+            if(useCorrection) {
+                result += config.gridPositionCorrection;
+            }
+
+            return result;
+        }
+
+        void OnEntitySpawned(BaseNetworkable entity)
+        {
+            var miniCopter = entity as MiniCopter;
+
+            if(miniCopter) {
+                if(miniCopter.ShortPrefabName != "minicopter.entity") {
+                    return;
+                }
+
+                ProcessMiniCopter(miniCopter, null);
+            }
+        }
+
+        StorageContainer ProcessMiniCopter(MiniCopter miniCopter, StorageContainer existingStorage) {
+            StorageContainer storage;
+
+            if(existingStorage == null) {
+                var ent = GameManager.server.CreateEntity("assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab");
+            
+                ent.name = "minicopterdrone.storage";
+                ent.Spawn();
+                ent.transform.position = miniCopter.transform.position;
+                ent.transform.rotation = Quaternion.identity;
+                ent.transform.localPosition = new Vector3(0, 0.2f, -1.2f);
+                ent.transform.localRotation = Quaternion.identity;
+                ent.SetParent(miniCopter, false, false);
+
+                storage = ent.GetComponent<StorageContainer>();
+            } else {
+                storage = existingStorage;
+            }
+
+            storage.inventory.onItemAddedRemoved = new Action<Item, bool>((Item item, bool added) => {
+                droneManager.OnItemAddedOrRemoved(miniCopter, storage, item, added);
+                storage.OnItemAddedOrRemoved(item, added);
+            });
+
+            return storage;
+        }
+
+        void Loaded() {
+            permission.RegisterPermission(calibratePerm, this);
+            var go = new GameObject(DroneManager.Guid);
+            droneManager = go.AddComponent<DroneManager>();
+
+            foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
+                StorageContainer storage = null;
+
+                // scraptransportheli dervies from MiniCopter
+                if(miniCopter.ShortPrefabName != "minicopter.entity") {
+                    continue;
+                }
+
+                foreach(var ent in miniCopter.children) {
+                    var container = ent as StorageContainer;
+
+                    if(container) {
+                        if(container.name == "minicopterdrone.storage") {
+                            storage = container;
+                        }
+                    }
+                }
+
+                ProcessMiniCopter(miniCopter, storage);
+            }
+
+            var compiler = new Compiler();
+            var cpu = new DroneCPU();
+
+            bool success = compiler.Compile(@"
+            label top
+            num reason
+
+            num x; num y; num z
+            num a; num b; num c
+
+            mov reason 42
+            mov x 42
+            jne x 42 failed
+            #print x x
+
+            mov reason 0
+            mov x 1
+            mov y 2
+            mov z 3
+
+            jne x 1 failed
+            jne y 2 failed
+            jne z 3 failed
+            jna x 1 failed
+            jna y 2 failed
+            jna z 3 failed
+
+            mov reason 1
+            push x
+            push y
+            push z
+
+            pop r0
+            pop r1
+            pop r2
+
+            jne r0 3 failed
+            jne r1 2 failed
+            jne r2 1 failed
+
+            mov reason 2
+            je 1 1.1 failed
+            ja 1 1.1 failed
+            jl 1.1 1 failed
+            jle 1.1 1 failed
+            jg 1 1.1 failed
+            jge 1 1.1 failed
+
+            mov reason 3
+            #oops
+
+            mov reason 4
+            add 1 2
+            jne rslt 3 failed
+            sub 1 2
+            jne rslt -1 failed
+            mul 7 7
+            jne rslt 49 failed
+            div 27 3
+            jne rslt 9 failed
+            pow 5 2
+            jne rslt 25 failed
+            min 3 2
+            jne 2 rslt failed
+            max 3 2
+            jne rslt 3 failed
+
+            mov reason 5
+            sqrt 49
+            jne rslt 7 failed
+            abs -1
+            jne rslt 1 failed
+            floor 1.9999
+            jne rslt 1 failed
+            ceil 1.0001
+            jne rslt 2 failed
+            round 1.4999
+            jne rslt 1 failed
+            sign -3.14
+            jne rslt -1 failed
+
+            mov reason 6
+            push 1
+            push 2
+            push 3
+            call vec_length
+            #print length r0
+
+            #3.74165738677394
+            mov reason 7
+            jna r0 3.741657 failed
+
+            mov reason 8
+            jne r0 3.74165738 failed
+
+            mov reason 9
+            lerp 1 2 0.5
+            #jne rslt 1.5 failed
+            
+            jmp end
+
+            label failed
+                print failed reason
+
+            label vec_length
+                num sum
+                mov sum 0
+                pop r0
+                pop r1
+                pop r2
+                mul r0 r0
+                add sum rslt
+                mov sum rslt
+                mul r1 r1
+                add sum rslt
+                mov sum rslt
+                mul r2 r2
+                add sum rslt
+                mov sum rslt
+                sqrt sum
+                mov r0 rslt
+                ret
+
+            label end
+            #print success 0
+            jmp top
+            ");
+
+            if(!success) {
+                foreach(var error in compiler.errors) {
+                    Print(error);
+                }
+            } else {
+                cpu.LoadInstructions(compiler.instructions);
+                var startTime = Time.realtimeSinceStartup;
+
+                int numCycles = 100000000;
+                for(int i = 0; i < numCycles; i++) {
+                    string reason;
+                    Compiler.Instruction instruction;
+                    if(cpu.Cycle(out instruction, out reason)) {
+
+                    } else {
+                        Print(reason);
+                        break;
+                    }
+                }
+                
+                var endTime = Time.realtimeSinceStartup;
+                Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
+                // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
+                // elapsed: 100000000 in 14.94202s (6692537 instructions/s)
+            }
+
+            // if the plugin crashes or something before Unload is called
+            /*var list2 = GameObject.FindObjectsOfType<MonoBehaviour>();
+            for(int i = list2.Length - 1; i >= 0; i--) {
+                var ent = list2[i];
+                if(ent.name == DroneManager.Guid) {
+                    GameObject.Destroy(ent);
+                }
+            }*/
+
+            /*var compiler = new Compiler();
+            var success = compiler.Compile(@"
+            #droneasm
+            startengine
+            settarget -1 0 0 0
+            setalt -1 50
+            setpitch 35
+            flythrough
+
+            label loop
+                jmp loop
+            ");
+
+            if(!success) {
+                foreach(var error in compiler.errors) {
+                    Print(error);
+                }
+
+                return;
+            }
+
+            for(int i = 0; i < 50; i++) {
+                var position = new Vector3(UnityEngine.Random.Range(-500, 500), 0, UnityEngine.Random.Range(-500, 500));
+                position.y = TerrainMeta.HeightMap.GetHeight(position) + 50;
+                var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
+                miniCopter.Spawn();
+                var storage = ProcessMiniCopter(miniCopter, null);
+                var drone = droneManager.AddDrone(miniCopter, storage);
+                drone.cpu.LoadInstructions(compiler.instructions);
+                drone.SetFlag(Drone.Flag.EngineOn, true);
+                drone.active = true;
+            }*/
+        }
+
+        void Unload() {
+            var list = GameObject.FindObjectsOfType<MiniCopter>();
+            for(int i = list.Length - 1; i >= 0; i--) {
+                list[i].Kill();
+            }
+
+            if(droneManager) {
+                GameObject.Destroy(droneManager);
+            }
+        }
+
         class DroneManager : MonoBehaviour {
             public const string Guid = "918729b6-ca44-46c6-8ad6-1722abff10d4";
             Dictionary<int, Drone> drones = new Dictionary<int, Drone>();
@@ -135,7 +455,6 @@ namespace Oxide.Plugins
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
             List<int> removeActiveList = new List<int>();
             List<int> removeDroneList = new List<int>();
-            int counter = 0;
 
             void FixedUpdate() {
                 var startTime = Time.realtimeSinceStartup;
@@ -187,15 +506,6 @@ namespace Oxide.Plugins
                 foreach(var id in removeDroneList) {
                     drones.Remove(id);
                 }
-
-                float elapsedTime = Time.realtimeSinceStartup - startTime;
-                benchmarker.Update("DroneManager.FixedUpdate", elapsedTime);
-
-                if(counter % Mathf.RoundToInt(1 / Time.fixedDeltaTime) == 0) {
-                    benchmarker.Report();
-                }
-
-                counter++;
             }
 
             public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
@@ -224,339 +534,6 @@ namespace Oxide.Plugins
                 foreach(var drone in drones) {
                     drone.Value.Reset();
                 }
-            }
-        }
-
-        class DroneCPU {
-            List<Compiler.Instruction> instructions = new List<Compiler.Instruction>();
-            public Dictionary<string, int> isrs = new Dictionary<string, int>();
-            public Queue<string> interrupts = new Queue<string>();
-            public List<int> picStack = new List<int>();
-            int pic = 0;
-            bool abort = false;
-            string abortReason = null;
-            Dictionary<string, Compiler.Instruction.Argument> numVariables = new Dictionary<string, Compiler.Instruction.Argument>();
-            List<float> stack = new List<float>();
-            public int maxStackSize = 64;
-
-            public void Reset() {
-                pic = 0;
-                interrupts.Clear();
-                picStack.Clear();
-                numVariables.Clear();
-            }
-
-            public void LoadInstructions(List<Compiler.Instruction> instructions) {
-                this.instructions = instructions;
-                isrs.Clear();
-                interrupts.Clear();
-                picStack.Clear();
-                numVariables.Clear();
-                stack.Clear();
-                pic = 0;
-
-                for(int i = 0; i < instructions.Count; i++) {
-                    var instr = instructions[i];
-
-                    if(instr.name == "isr") {
-                        isrs.Add(instr.args[0].stringValue, i);
-                    } else if(instr.name == "num") {
-                        numVariables.Add(instr.args[0].stringValue, instr.args[0]);
-                    }
-                }
-            }
-
-            public void Jump(int addr) {
-                pic = addr;
-            }
-
-            public void Call(int addr) {
-                picStack.Add(pic);
-                pic = addr;
-            }
-
-            public bool Ret() {
-                if(picStack.Count == 0) {
-                    return false;
-                }
-
-                Jump(picStack[picStack.Count - 1]);
-                picStack.RemoveAt(picStack.Count - 1);
-
-                return true;
-            }
-
-            public void Interrupt(string name) {
-                if(isrs.ContainsKey(name)) {
-                    interrupts.Enqueue(name);
-                }
-            }
-
-            public bool WriteVariable(string name, float value) {
-                Compiler.Instruction.Argument arg;
-                if(numVariables.TryGetValue(name, out arg)) {
-                    arg.floatValue = value;
-                    arg.intValue = (int)value;
-                    return true;
-                }
-
-                return false;
-            }
-
-            public bool HandlePendingInterrupt() {
-                if(interrupts.Count == 0) {
-                    return false;
-                }
-
-                var isr = interrupts.Dequeue();
-                int addr;
-                isrs.TryGetValue(isr, out addr);
-                Call(addr);
-
-                return true;
-            }
-
-            public void Abort(string reason) {
-                abort = true;
-                abortReason = reason;
-            }
-
-            public bool Cycle(out Compiler.Instruction instr, out string failReason) {
-                if(instructions == null || pic < 0 || pic >= instructions.Count) {
-                    instr = null;
-                    failReason = "out of instructions";
-                    return false;
-                }
-
-                if(abort) {
-                    instr = null;
-                    failReason = abortReason;
-                    return false;
-                }
-
-                instr = instructions[pic++];
-
-                if(instr.name == "print") {
-                    Print($"cpu print: {instr.args[0].rawValue} {instr.args[1].floatValue}");
-                }
-
-                if(instr.args.Count == 1) {
-                    bool isOneOfThese = true;
-                    switch(instr.name) {
-                        case "jmp":
-                            Jump(instr.args[0].intValue);
-                            break;
-                        case "call":
-                            Call(instr.args[0].intValue);
-                            break;
-                        case "int":
-                            Interrupt(instr.args[0].stringValue);
-                            break;
-                        case "ret":
-                            if(!Ret()) {
-                                failReason = "no address to return from";
-                                return false;
-                            }
-
-                            break;
-                        case "push":
-                            if(stack.Count == maxStackSize) {
-                                failReason = $"maximum stack size exceeded ({maxStackSize})";
-                                return false;
-                            }
-
-                            stack.Add(instr.args[0].floatValue);
-                            break;
-                        default:
-                            isOneOfThese = false;
-                            break;
-                    }
-
-                    if(isOneOfThese) {
-                        failReason = null;
-                        return true;
-                    }
-                }
-
-                // if maybe instruction that assigns to variable as first arg
-                if(instr.args.Count > 0 && instr.args[0].paramType == Compiler.ParamType.NumVariable) {
-                    bool isOneOfThese = true;
-                    float result = 0;
-
-                    switch(instr.name) {
-                        case "pop":
-                            if(stack.Count == 0) {
-                                failReason = "stack empty";
-                                return false;
-                            }
-
-                            result = stack[stack.Count - 1];
-                            stack.RemoveAt(stack.Count - 1);
-                            break;
-                        case "mov":
-                            result = instr.args[1].floatValue;
-                            break;
-                        default:
-                            isOneOfThese = false;
-                            break;
-                    }
-
-                    if(isOneOfThese) {
-                        instr.args[0].floatValue = result;
-                        instr.args[0].intValue = (int)result;
-                        failReason = null;
-                        return true;
-                    }
-                }
-
-                // if might be one arg math instruction
-                if(instr.args.Count == 1 && instr.args[0].paramType == Compiler.ParamType.Num) {
-                    var valueArg = instr.args[0];
-                    float result = 0;
-                    bool isOneOfThese = true;
-                    
-                    try {
-                        switch(instr.name) {
-                            case "abs":
-                                result = Mathf.Abs(valueArg.floatValue);
-                                break;
-                            case "sign":
-                                result = Mathf.Sign(valueArg.floatValue);
-                                break;
-                            case "sqrt":
-                                result = Mathf.Sqrt(valueArg.floatValue);
-                                break;
-                            case "round":
-                                result = Mathf.Round(valueArg.floatValue);
-                                break;
-                            case "floor":
-                                result = Mathf.Floor(valueArg.floatValue);
-                                break;
-                            case "ceil":
-                                result = Mathf.Ceil(valueArg.floatValue);
-                                break;
-                            default:
-                                isOneOfThese = false;
-                                break;
-                        }
-
-                        if(isOneOfThese) {
-                            if(!float.IsFinite(result)) {
-                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
-                                return false;
-                            }
-
-                            WriteVariable("rslt", result);
-                            failReason = null;
-                            return true;
-                        }
-                    } catch(ArithmeticException e) {
-                        failReason = e.ToString();
-                        return false;
-                    }
-                }
-
-                // if might be two arg math instruction
-                if(instr.args.Count == 2 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num) {
-                    var lhsArg = instr.args[0];
-                    var rhsArg = instr.args[1];
-                    float result = 0;
-                    bool isOneOfThese = true;
-                    
-                    try {
-                        switch(instr.name) {
-                            case "add":
-                                result = lhsArg.floatValue + rhsArg.floatValue;
-                                break;
-                            case "sub":
-                                result = lhsArg.floatValue - rhsArg.floatValue;
-                                break;
-                            case "mul":
-                                result = lhsArg.floatValue * rhsArg.floatValue;
-                                break;
-                            case "div":
-                                result = lhsArg.floatValue / rhsArg.floatValue;
-                                break;
-                            case "pow":
-                                result = Mathf.Pow(lhsArg.floatValue, rhsArg.floatValue);
-                                break;
-                            case "min":
-                                result = Mathf.Min(lhsArg.floatValue, rhsArg.floatValue);
-                                break;
-                            case "max":
-                                result = Mathf.Max(lhsArg.floatValue, rhsArg.floatValue);
-                                break;
-                            default:
-                                isOneOfThese = false;
-                                break;
-                        }
-
-                        if(isOneOfThese) {
-                            if(!float.IsFinite(result)) {
-                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
-                                return false;
-                            }
-
-                            WriteVariable("rslt", result);
-                            failReason = null;
-                            return true;
-                        }
-                    } catch(ArithmeticException e) {
-                        failReason = e.ToString();
-                        return false;
-                    }
-                }
-
-                if(instr.name == "lerp") {
-                    float result = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
-                    WriteVariable("rslt", result);
-                    failReason = null;
-                    return true;
-                }
-
-                // if might be conditional jump instruction
-                if(instr.args.Count == 3 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num && instr.args[2].paramType == Compiler.ParamType.Address) {
-                    float lhs = instr.args[0].floatValue;
-                    float rhs = instr.args[1].floatValue;
-                    int addr = instr.args[2].intValue;
-                    bool jump = false;
-
-                    switch(instr.name) {
-                        case "ja":
-                            jump = Mathf.Approximately(lhs, rhs);
-                            break;
-                        case "je":
-                            jump = lhs == rhs;
-                            break;
-                        case "jne":
-                            jump = lhs != rhs;
-                            break;
-                        case "jna":
-                            jump = !Mathf.Approximately(lhs, rhs);
-                            break;
-                        case "jg":
-                            jump = lhs > rhs;
-                            break;
-                        case "jge":
-                            jump = lhs >= rhs;
-                            break;
-                        case "jl":
-                            jump = lhs < rhs;
-                            break;
-                        case "jle":
-                            jump = lhs <= rhs;
-                            break;
-                    }
-
-                    if(jump) {
-                        Jump(addr);
-                        failReason = null;
-                        return true;
-                    }
-                }
-
-                failReason = null;
-                return true;
             }
         }
 
@@ -773,7 +750,7 @@ namespace Oxide.Plugins
                 }
 
                 if(!copter.HasFuel()) {
-                    //StopEngine();
+                    StopEngine();
                 }
 
                 if(HasFlag(Flag.EngineStarting) && Time.fixedTime > engineStartTime + 5.0f) {
@@ -1234,62 +1211,311 @@ namespace Oxide.Plugins
             }
         }
 
-        static bool TryMapGridToPosition(string coord, out Vector3 result, bool useCorrection = true) {
-             float mapSize = ConVar.Server.worldsize;
-            
-            if(coord.Length <= 4) {
-                var match = Regex.Match(coord, @"^([A-Za-z]{1,2})([0-9]{1,2})$");
+        class DroneCPU {
+            List<Compiler.Instruction> instructions = new List<Compiler.Instruction>();
+            public Dictionary<string, int> isrs = new Dictionary<string, int>();
+            public Queue<string> interrupts = new Queue<string>();
+            public List<int> picStack = new List<int>();
+            int pic = 0;
+            bool abort = false;
+            string abortReason = null;
+            Dictionary<string, Compiler.Instruction.Argument> numVariables = new Dictionary<string, Compiler.Instruction.Argument>();
+            List<float> stack = new List<float>();
+            public int maxStackSize = 64;
 
-                if(match.Success && match.Groups.Count == 3) {
-                    var groups = match.Groups;
-                    string letter = groups[1].ToString().ToUpper();
-                    string numberWholeStr = groups[2].ToString();
+            public void Reset() {
+                pic = 0;
+                interrupts.Clear();
+                picStack.Clear();
+                numVariables.Clear();
+            }
 
-                    int letterNumber = (letter.Length == 1) ? letter[0] - 'A' : letter[1] + 26 - 'A';
-                    float row;
-                    float.TryParse(numberWholeStr, out row);
+            public void LoadInstructions(List<Compiler.Instruction> instructions) {
+                this.instructions = instructions;
+                isrs.Clear();
+                interrupts.Clear();
+                picStack.Clear();
+                numVariables.Clear();
+                stack.Clear();
+                pic = 0;
 
-                    float x = letterNumber * config.gridSize - (mapSize / 2);
-                    float y = -row * config.gridSize + (mapSize / 2);
+                for(int i = 0; i < instructions.Count; i++) {
+                    var instr = instructions[i];
 
-                    result = new Vector3(x, 0, y);
-
-                    if(useCorrection) {
-                        result += config.gridPositionCorrection;
+                    if(instr.name == "isr") {
+                        isrs.Add(instr.args[0].stringValue, i);
+                    } else if(instr.name == "num") {
+                        numVariables.Add(instr.args[0].stringValue, instr.args[0]);
                     }
+                }
+            }
 
+            public void Jump(int addr) {
+                pic = addr;
+            }
+
+            public void Call(int addr) {
+                picStack.Add(pic);
+                pic = addr;
+            }
+
+            public bool Ret() {
+                if(picStack.Count == 0) {
+                    return false;
+                }
+
+                Jump(picStack[picStack.Count - 1]);
+                picStack.RemoveAt(picStack.Count - 1);
+
+                return true;
+            }
+
+            public void Interrupt(string name) {
+                if(isrs.ContainsKey(name)) {
+                    interrupts.Enqueue(name);
+                }
+            }
+
+            public bool WriteVariable(string name, float value) {
+                Compiler.Instruction.Argument arg;
+                if(numVariables.TryGetValue(name, out arg)) {
+                    arg.floatValue = value;
+                    arg.intValue = (int)value;
                     return true;
                 }
+
+                return false;
             }
 
-            result = new Vector2();
-            return false;
-        }
-
-        static Vector3 MapGridToPosition(float col, float row, bool useCorrection = true) {
-            float mapSize = ConVar.Server.worldsize;
-            float x = col * config.gridSize - (mapSize / 2);
-            float y = -row * config.gridSize + (mapSize / 2);
-
-            var result = new Vector3(x, 0, y);
-
-            if(useCorrection) {
-                result += config.gridPositionCorrection;
-            }
-
-            return result;
-        }
-
-        void OnEntitySpawned(BaseNetworkable entity)
-        {
-            var miniCopter = entity as MiniCopter;
-
-            if(miniCopter) {
-                if(miniCopter.ShortPrefabName != "minicopter.entity") {
-                    return;
+            public bool HandlePendingInterrupt() {
+                if(interrupts.Count == 0) {
+                    return false;
                 }
 
-                ProcessMiniCopter(miniCopter, null);
+                var isr = interrupts.Dequeue();
+                int addr;
+                isrs.TryGetValue(isr, out addr);
+                Call(addr);
+
+                return true;
+            }
+
+            public void Abort(string reason) {
+                abort = true;
+                abortReason = reason;
+            }
+
+            public bool Cycle(out Compiler.Instruction instr, out string failReason) {
+                if(instructions == null || pic < 0 || pic >= instructions.Count) {
+                    instr = null;
+                    failReason = "out of instructions";
+                    return false;
+                }
+
+                if(abort) {
+                    instr = null;
+                    failReason = abortReason;
+                    return false;
+                }
+
+                instr = instructions[pic++];
+
+                switch(instr.name) {
+                    case "jmp":
+                        Jump(instr.args[0].intValue);
+                        break;
+                    case "call":
+                        Call(instr.args[0].intValue);
+                        break;
+                    case "int":
+                        Interrupt(instr.args[0].stringValue);
+                        break;
+                    case "ret":
+                        if(!Ret()) {
+                            failReason = "no address to return from";
+                            return false;
+                        }
+
+                        break;
+                    case "push":
+                        if(stack.Count == maxStackSize) {
+                            failReason = $"maximum stack size exceeded ({maxStackSize})";
+                            return false;
+                        }
+
+                        stack.Add(instr.args[0].floatValue);
+                        break;
+                }
+
+                // if maybe instruction that assigns to variable as first arg
+                if(instr.args.Count > 0 && instr.args[0].paramType == Compiler.ParamType.NumVariable) {
+                    bool isOneOfThese = true;
+                    float result = 0;
+
+                    switch(instr.name) {
+                        case "pop":
+                            if(stack.Count == 0) {
+                                failReason = "stack empty";
+                                return false;
+                            }
+
+                            result = stack[stack.Count - 1];
+                            stack.RemoveAt(stack.Count - 1);
+                            break;
+                        case "mov":
+                            result = instr.args[1].floatValue;
+                            break;
+                        default:
+                            isOneOfThese = false;
+                            break;
+                    }
+
+                    if(isOneOfThese) {
+                        instr.args[0].floatValue = result;
+                        instr.args[0].intValue = (int)result;
+                    }
+                }
+
+                // if might be one arg math instruction
+                if(instr.args.Count == 1 && instr.args[0].paramType == Compiler.ParamType.Num) {
+                    var valueArg = instr.args[0];
+                    float result = 0;
+                    bool isOneOfThese = true;
+                    
+                    try {
+                        switch(instr.name) {
+                            case "abs":
+                                result = Mathf.Abs(valueArg.floatValue);
+                                break;
+                            case "sign":
+                                result = Mathf.Sign(valueArg.floatValue);
+                                break;
+                            case "sqrt":
+                                result = Mathf.Sqrt(valueArg.floatValue);
+                                break;
+                            case "round":
+                                result = Mathf.Round(valueArg.floatValue);
+                                break;
+                            case "floor":
+                                result = Mathf.Floor(valueArg.floatValue);
+                                break;
+                            case "ceil":
+                                result = Mathf.Ceil(valueArg.floatValue);
+                                break;
+                            default:
+                                isOneOfThese = false;
+                                break;
+                        }
+
+                        if(isOneOfThese) {
+                            if(!float.IsFinite(result)) {
+                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
+                                return false;
+                            }
+
+                            WriteVariable("rslt", result);
+                        }
+                    } catch(ArithmeticException e) {
+                        failReason = e.ToString();
+                        return false;
+                    }
+                }
+
+                // if might be two arg math instruction
+                if(instr.args.Count == 2 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num) {
+                    var lhsArg = instr.args[0];
+                    var rhsArg = instr.args[1];
+                    float result = 0;
+                    bool isOneOfThese = true;
+                    
+                    try {
+                        switch(instr.name) {
+                            case "add":
+                                result = lhsArg.floatValue + rhsArg.floatValue;
+                                break;
+                            case "sub":
+                                result = lhsArg.floatValue - rhsArg.floatValue;
+                                break;
+                            case "mul":
+                                result = lhsArg.floatValue * rhsArg.floatValue;
+                                break;
+                            case "div":
+                                result = lhsArg.floatValue / rhsArg.floatValue;
+                                break;
+                            case "pow":
+                                result = Mathf.Pow(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            case "min":
+                                result = Mathf.Min(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            case "max":
+                                result = Mathf.Max(lhsArg.floatValue, rhsArg.floatValue);
+                                break;
+                            default:
+                                isOneOfThese = false;
+                                break;
+                        }
+
+                        if(isOneOfThese) {
+                            if(!float.IsFinite(result)) {
+                                failReason = $"math error: {instr.name} {String.Join(" ", instr.args.Select(x => x.rawValue))} => {result}";
+                                return false;
+                            }
+
+                            WriteVariable("rslt", result);
+                        }
+                    } catch(ArithmeticException e) {
+                        failReason = e.ToString();
+                        return false;
+                    }
+                }
+
+                if(instr.name == "lerp") {
+                    float result = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
+                    WriteVariable("rslt", result);
+                }
+
+                // if might be conditional jump instruction
+                if(instr.args.Count == 3 && instr.args[0].paramType == Compiler.ParamType.Num && instr.args[1].paramType == Compiler.ParamType.Num && instr.args[2].paramType == Compiler.ParamType.Address) {
+                    float lhs = instr.args[0].floatValue;
+                    float rhs = instr.args[1].floatValue;
+                    int addr = instr.args[2].intValue;
+                    bool jump = false;
+
+                    switch(instr.name) {
+                        case "ja":
+                            jump = Mathf.Approximately(lhs, rhs);
+                            break;
+                        case "je":
+                            jump = lhs == rhs;
+                            break;
+                        case "jne":
+                            jump = lhs != rhs;
+                            break;
+                        case "jna":
+                            jump = !Mathf.Approximately(lhs, rhs);
+                            break;
+                        case "jg":
+                            jump = lhs > rhs;
+                            break;
+                        case "jge":
+                            jump = lhs >= rhs;
+                            break;
+                        case "jl":
+                            jump = lhs < rhs;
+                            break;
+                        case "jle":
+                            jump = lhs <= rhs;
+                            break;
+                    }
+
+                    if(jump) {
+                        Jump(addr);
+                    }
+                }
+
+                failReason = null;
+                return true;
             }
         }
 
@@ -1373,8 +1599,6 @@ namespace Oxide.Plugins
             }
 
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
-                {"print", new Param[] { new Param("string", ParamType.Identifier), new Param("num", ParamType.Num) }},
-
                 {"label", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"isr", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"jmp", new Param[] { new Param("label_name", ParamType.Address) }},
@@ -1660,268 +1884,7 @@ namespace Oxide.Plugins
                 }
             }
         }
-
-        StorageContainer ProcessMiniCopter(MiniCopter miniCopter, StorageContainer existingStorage) {
-            StorageContainer storage;
-
-            if(existingStorage == null) {
-                var ent = GameManager.server.CreateEntity("assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab");
-            
-                ent.name = "minicopterdrone.storage";
-                ent.Spawn();
-                ent.transform.position = miniCopter.transform.position;
-                ent.transform.rotation = Quaternion.identity;
-                ent.transform.localPosition = new Vector3(0, 0.2f, -1.2f);
-                ent.transform.localRotation = Quaternion.identity;
-                ent.SetParent(miniCopter, false, false);
-
-                storage = ent.GetComponent<StorageContainer>();
-            } else {
-                storage = existingStorage;
-            }
-
-            storage.inventory.onItemAddedRemoved = new Action<Item, bool>((Item item, bool added) => {
-                droneManager.OnItemAddedOrRemoved(miniCopter, storage, item, added);
-                storage.OnItemAddedOrRemoved(item, added);
-            });
-
-            return storage;
-        }
-
-        void Loaded() {
-            permission.RegisterPermission(calibratePerm, this);
-            var go = new GameObject(DroneManager.Guid);
-            droneManager = go.AddComponent<DroneManager>();
-
-            foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
-                StorageContainer storage = null;
-
-                // scraptransportheli dervies from MiniCopter
-                if(miniCopter.ShortPrefabName != "minicopter.entity") {
-                    continue;
-                }
-
-                foreach(var ent in miniCopter.children) {
-                    var container = ent as StorageContainer;
-
-                    if(container) {
-                        if(container.name == "minicopterdrone.storage") {
-                            storage = container;
-                        }
-                    }
-                }
-
-                ProcessMiniCopter(miniCopter, storage);
-            }
-
-            var compiler = new Compiler();
-            var cpu = new DroneCPU();
-
-            bool success = compiler.Compile(@"
-            label top
-            num reason
-
-            num x; num y; num z
-            num a; num b; num c
-
-            mov reason 42
-            mov x 42
-            jne x 42 failed
-            #print x x
-
-            mov reason 0
-            mov x 1
-            mov y 2
-            mov z 3
-
-            jne x 1 failed
-            jne y 2 failed
-            jne z 3 failed
-            jna x 1 failed
-            jna y 2 failed
-            jna z 3 failed
-
-            mov reason 1
-            push x
-            push y
-            push z
-
-            pop r0
-            pop r1
-            pop r2
-
-            jne r0 3 failed
-            jne r1 2 failed
-            jne r2 1 failed
-
-            mov reason 2
-            je 1 1.1 failed
-            ja 1 1.1 failed
-            jl 1.1 1 failed
-            jle 1.1 1 failed
-            jg 1 1.1 failed
-            jge 1 1.1 failed
-
-            mov reason 3
-            #oops
-
-            mov reason 4
-            add 1 2
-            jne rslt 3 failed
-            sub 1 2
-            jne rslt -1 failed
-            mul 7 7
-            jne rslt 49 failed
-            div 27 3
-            jne rslt 9 failed
-            pow 5 2
-            jne rslt 25 failed
-            min 3 2
-            jne 2 rslt failed
-            max 3 2
-            jne rslt 3 failed
-
-            mov reason 5
-            sqrt 49
-            jne rslt 7 failed
-            abs -1
-            jne rslt 1 failed
-            floor 1.9999
-            jne rslt 1 failed
-            ceil 1.0001
-            jne rslt 2 failed
-            round 1.4999
-            jne rslt 1 failed
-            sign -3.14
-            jne rslt -1 failed
-
-            mov reason 6
-            push 1
-            push 2
-            push 3
-            call vec_length
-            #print length r0
-
-            #3.74165738677394
-            mov reason 7
-            jna r0 3.741657 failed
-
-            mov reason 8
-            jne r0 3.74165738 failed
-
-            mov reason 9
-            lerp 1 2 0.5
-            #jne rslt 1.5 failed
-            
-            jmp end
-
-            label failed
-                print failed reason
-
-            label vec_length
-                num sum
-                mov sum 0
-                pop r0
-                pop r1
-                pop r2
-                mul r0 r0
-                add sum rslt
-                mov sum rslt
-                mul r1 r1
-                add sum rslt
-                mov sum rslt
-                mul r2 r2
-                add sum rslt
-                mov sum rslt
-                sqrt sum
-                mov r0 rslt
-                ret
-
-            label end
-            #print success 0
-            jmp top
-            ");
-
-            if(!success) {
-                foreach(var error in compiler.errors) {
-                    Print(error);
-                }
-            } else {
-                cpu.LoadInstructions(compiler.instructions);
-                var startTime = Time.realtimeSinceStartup;
-
-                int numCycles = 100000000;
-                for(int i = 0; i < numCycles; i++) {
-                    string reason;
-                    Compiler.Instruction instruction;
-                    if(cpu.Cycle(out instruction, out reason)) {
-
-                    } else {
-                        Print(reason);
-                        break;
-                    }
-                }
-                
-                var endTime = Time.realtimeSinceStartup;
-                Print($"elapsed: {numCycles} in {endTime - startTime}s ({numCycles / (endTime - startTime)} instructions/s)");
-                // elapsed: 100000000 in 21.91016s (4564094 instructions/s)
-                // elapsed: 100000000 in 14.94202s (6692537 instructions/s)
-            }
-
-            // if the plugin crashes or something before Unload is called
-            /*var list2 = GameObject.FindObjectsOfType<MonoBehaviour>();
-            for(int i = list2.Length - 1; i >= 0; i--) {
-                var ent = list2[i];
-                if(ent.name == DroneManager.Guid) {
-                    GameObject.Destroy(ent);
-                }
-            }*/
-
-            /*var compiler = new Compiler();
-            var success = compiler.Compile(@"
-            #droneasm
-            startengine
-            settarget -1 0 0 0
-            setalt -1 50
-            setpitch 35
-            flythrough
-
-            label loop
-                jmp loop
-            ");
-
-            if(!success) {
-                foreach(var error in compiler.errors) {
-                    Print(error);
-                }
-
-                return;
-            }
-
-            for(int i = 0; i < 50; i++) {
-                var position = new Vector3(UnityEngine.Random.Range(-500, 500), 0, UnityEngine.Random.Range(-500, 500));
-                position.y = TerrainMeta.HeightMap.GetHeight(position) + 50;
-                var miniCopter = GameManager.server.CreateEntity("assets/content/vehicles/minicopter/minicopter.entity.prefab", position) as MiniCopter;
-                miniCopter.Spawn();
-                var storage = ProcessMiniCopter(miniCopter, null);
-                var drone = droneManager.AddDrone(miniCopter, storage);
-                drone.cpu.LoadInstructions(compiler.instructions);
-                drone.SetFlag(Drone.Flag.EngineOn, true);
-                drone.active = true;
-            }*/
-        }
-
-        void Unload() {
-            var list = GameObject.FindObjectsOfType<MiniCopter>();
-            for(int i = list.Length - 1; i >= 0; i--) {
-                list[i].Kill();
-            }
-
-            if(droneManager) {
-                GameObject.Destroy(droneManager);
-            }
-        }
-
+        
         static class PIDController {
             public class Base {
                 public float p;
@@ -2066,3 +2029,7 @@ namespace Oxide.Plugins
         }
     }
 }
+
+
+
+
