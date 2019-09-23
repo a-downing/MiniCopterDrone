@@ -750,7 +750,7 @@ namespace Oxide.Plugins
                 }
 
                 if(!copter.HasFuel()) {
-                    StopEngine();
+                    //StopEngine();
                 }
 
                 if(HasFlag(Flag.EngineStarting) && Time.fixedTime > engineStartTime + 5.0f) {
@@ -1320,6 +1320,10 @@ namespace Oxide.Plugins
 
                 instr = instructions[pic++];
 
+                if(instr.name == "print") {
+                    Print($"cpu print: {instr.args[0].rawValue} {instr.args[1].floatValue}");
+                }
+
                 switch(instr.name) {
                     case "jmp":
                         Jump(instr.args[0].intValue);
@@ -1599,6 +1603,8 @@ namespace Oxide.Plugins
             }
 
             Dictionary<string, Param[]> instructionDefs = new Dictionary<string, Param[]> {
+                {"print", new Param[] { new Param("string", ParamType.Identifier), new Param("num", ParamType.Num) }},
+                
                 {"label", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"isr", new Param[] { new Param("name", ParamType.Identifier) }},
                 {"jmp", new Param[] { new Param("label_name", ParamType.Address) }},
