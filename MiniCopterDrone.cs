@@ -288,31 +288,44 @@ namespace Oxide.Plugins
 
                 instr = instructions[pic++];
 
-                switch(instr.name) {
-                    case "jmp":
-                        Jump(instr.args[0].intValue);
-                        break;
-                    case "call":
-                        Call(instr.args[0].intValue);
-                        break;
-                    case "int":
-                        Interrupt(instr.args[0].stringValue);
-                        break;
-                    case "ret":
-                        if(!Ret()) {
-                            failReason = "no address to return from";
-                            return false;
-                        }
+                // if maybe one arg instruction
+                if(instr.args.Count == 1) {
+                    bool isOneOfThese = true;
 
-                        break;
-                    case "push":
-                        if(stack.Count == maxStackSize) {
-                            failReason = $"maximum stack size exceeded ({maxStackSize})";
-                            return false;
-                        }
+                    switch(instr.name) {
+                        case "jmp":
+                            Jump(instr.args[0].intValue);
+                            break;
+                        case "call":
+                            Call(instr.args[0].intValue);
+                            break;
+                        case "int":
+                            Interrupt(instr.args[0].stringValue);
+                            break;
+                        case "ret":
+                            if(!Ret()) {
+                                failReason = "no address to return from";
+                                return false;
+                            }
 
-                        stack.Add(instr.args[0].floatValue);
-                        break;
+                            break;
+                        case "push":
+                            if(stack.Count == maxStackSize) {
+                                failReason = $"maximum stack size exceeded ({maxStackSize})";
+                                return false;
+                            }
+
+                            stack.Add(instr.args[0].floatValue);
+                            break;
+                        default:
+                            isOneOfThese = false;
+                            break;
+                    }
+
+                    if(isOneOfThese) {
+                        failReason = null;
+                        return true;
+                    }
                 }
 
                 // if maybe instruction that assigns to variable as first arg
@@ -341,6 +354,8 @@ namespace Oxide.Plugins
                     if(isOneOfThese) {
                         instr.args[0].floatValue = result;
                         instr.args[0].intValue = (int)result;
+                        failReason = null;
+                        return true;
                     }
                 }
 
@@ -382,6 +397,8 @@ namespace Oxide.Plugins
                             }
 
                             WriteVariable("rslt", result);
+                            failReason = null;
+                            return true;
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -431,6 +448,8 @@ namespace Oxide.Plugins
                             }
 
                             WriteVariable("rslt", result);
+                            failReason = null;
+                            return true;
                         }
                     } catch(ArithmeticException e) {
                         failReason = e.ToString();
@@ -441,6 +460,8 @@ namespace Oxide.Plugins
                 if(instr.name == "lerp") {
                     float result = Mathf.Lerp(instr.args[0].floatValue, instr.args[1].floatValue, instr.args[2].floatValue);
                     WriteVariable("rslt", result);
+                    failReason = null;
+                    return true;
                 }
 
                 // if might be conditional jump instruction
@@ -479,6 +500,8 @@ namespace Oxide.Plugins
 
                     if(jump) {
                         Jump(addr);
+                        failReason = null;
+                        return true;
                     }
                 }
 
