@@ -91,13 +91,13 @@ namespace Oxide.Plugins
 
         class DroneManager : MonoBehaviour {
             public const string Guid = "918729b6-ca44-46c6-8ad6-1722abff10d4";
-            Dictionary<int, Drone> drones = new Dictionary<int, Drone>();
+            Dictionary<uint, Drone> drones = new Dictionary<uint, Drone>();
 
             public static HashSet<int> activeFrequencies = new HashSet<int>();
             public static HashSet<int> risingEdgeFrequencies = new HashSet<int>();
             public static HashSet<int> fallingEdgeFrequencies = new HashSet<int>();
             List<int> removeActiveList = new List<int>();
-            List<int> removeDroneList = new List<int>();
+            List<uint> removeDroneList = new List<uint>();
 
             public void Init() {
                 float period = 1.0f / config.droneCPUFreq;
@@ -179,14 +179,14 @@ namespace Oxide.Plugins
                 drone.instanceId = miniCopter.net.ID;
                 drone.storage = storage;
                 drone.manager = this;
-                drones.Add(miniCopter.GetInstanceID(), drone);
+                drones.Add(drone.instanceId, drone);
                 return drone;
             }
 
             public void OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
                 Drone drone = null;
 
-                if(!drones.TryGetValue(miniCopter.GetInstanceID(), out drone)){
+                if(!drones.TryGetValue(miniCopter.net.ID, out drone)) {
                     drone = AddDrone(miniCopter, storage);
                 }
 
