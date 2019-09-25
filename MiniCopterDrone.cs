@@ -11,7 +11,11 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
+<<<<<<< HEAD
     [Info("Minicopter Drone", "Andrew", "1.2.0")]
+=======
+    [Info("Minicopter Drone", "Andrew", "1.2.1")]
+>>>>>>> develop
     public class MiniCopterDrone : RustPlugin {
         static MiniCopterDrone plugin = null;
         DroneManager droneManager = null;
