@@ -711,10 +711,6 @@ namespace Oxide.Plugins
             void StartEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
 
-                if(!copter) {
-                    return;
-                }
-
                 if(!HasFlag(Flag.EngineOn) && !HasFlag(Flag.EngineStarting) && !copter.Waterlogged()) {
                     engineStartTime = Time.fixedTime;
                     SetFlag(Flag.EngineStarting, true);
@@ -725,10 +721,6 @@ namespace Oxide.Plugins
             void StopEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
 
-                if(!copter) {
-                    return;
-                }
-
                 SetFlag(Flag.EngineOn, false);
                 SetFlag(Flag.EngineStarting, false);
                 copter.EngineOff();
@@ -736,10 +728,6 @@ namespace Oxide.Plugins
 
             void UpdateEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
-
-                if(!copter) {
-                    return;
-                }
 
                 if(!copter.HasFuel()) {
                     StopEngine();
