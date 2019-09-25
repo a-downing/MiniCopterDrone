@@ -63,6 +63,7 @@ namespace Oxide.Plugins
         void Init() {
             config = Config.ReadObject<ConfigData>();
             plugin = this;
+            compiler = new Compiler();
             AddCovalenceCommand("minicopterdrone.calibrate", nameof(Calibrate), calibratePerm);
         }
 
@@ -175,7 +176,7 @@ namespace Oxide.Plugins
             public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
                 var drone = new Drone();
                 drone.miniCopterRef.Set(miniCopter);
-                drone.instanceId = miniCopter.GetInstanceID();
+                drone.instanceId = miniCopter.net.ID;
                 drone.storage = storage;
                 drone.manager = this;
                 drones.Add(miniCopter.GetInstanceID(), drone);
@@ -533,7 +534,7 @@ namespace Oxide.Plugins
         class Drone {
             public DroneManager manager;
             public EntityRef miniCopterRef;
-            public int instanceId;
+            public uint instanceId;
             public DroneCPU cpu = new DroneCPU();
             public StorageContainer storage = null;
 
