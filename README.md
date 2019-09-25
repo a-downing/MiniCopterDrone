@@ -7,7 +7,9 @@
 
 `"gridSize"`: The length of a map grid square in units of game coordinates, you shouldn't need to change this.
 
-`"maxInstructionsPerFixedUpdate"`: The maximum number of instructions a drone can execute per FixedUpdate().
+`"maxInstructionsPerCycle"`: The maximum number of instructions a drone can execute per virtual CPU cycle.
+
+`"droneCPUFreq"`: The drone's virtual CPU frequency in Hz.
 
 `"maxProgramInstructions"`: The maximum number of instructions in a drone program
 
@@ -37,7 +39,7 @@ stop the engine
 
 `target <map_col> <map_row> <altitude_in_meters>`
 
-targets a point of the map. For example to target the center of grid A0 50 meters above the terrain: `target A.5 0.5 50`
+targets a point of the map. For example to target the center of grid A0 50 meters above the terrain: `target A.5 0.5 50`. Note, the `<map_col>` argument must have a decimal point, e.g. `A.0` or `A.`, or it will be interpreted as a variable.
 
 `sleep <seconds>`
 

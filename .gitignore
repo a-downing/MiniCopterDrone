@@ -3,3 +3,5 @@ bin/
 todo.txt
 notes.txt
 test.txt
+omnisharp.json
+makeReferences.js

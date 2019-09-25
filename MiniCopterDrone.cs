@@ -2,6 +2,7 @@ using System;
 using Oxide.Core;
 using Oxide.Core.Configuration;
 using Oxide.Core.Plugins;
+using Oxide.Core.Libraries.Covalence;
 using System.Linq;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -15,7 +16,7 @@ namespace Oxide.Plugins
         static MiniCopterDrone plugin = null;
         DroneManager droneManager = null;
         static ConfigData config;
-        static Compiler compiler = new Compiler();
+        static Compiler compiler = null;
         const string calibratePerm = "minicopterdrone.calibrate.allowed";
 
         class ConfigData {
@@ -23,16 +24,18 @@ namespace Oxide.Plugins
             public int maxProgramInstructions;
             [JsonProperty(PropertyName = "gridPositionCorrection")]
             public Vector3 gridPositionCorrection;
-            [JsonProperty(PropertyName = "maxInstructionsPerFixedUpdate")]
-            public int maxInstructionsPerFixedUpdate;
+            [JsonProperty(PropertyName = "maxInstructionsPerCycle")]
+            public int maxInstructionsPerCycle;
             [JsonProperty(PropertyName = "gridSize")]
             public float gridSize;
+            [JsonProperty(PropertyName = "droneCPUFreq")]
+            public float droneCPUFreq;
         }
 
         protected override void LoadDefaultMessages() {
             lang.RegisterMessages(new Dictionary<string, string> {
                 ["must_run_as_player"] = "this command must be run as a player",
-                ["need_calibrate_perm"] = "error: you need the {0} permission to use this command",
+                //["need_calibrate_perm"] = "error: you need the {0} permission to use this command",
                 ["grid_pos_corr_saved"] = "grid position correction saved",
                 ["calibrate_invalid_arg"] = "invalid argument format <grid_col><grid_row> ex: J13",
                 ["var_already_declared"] = "line {0}: variable already declared ({1})",
@@ -47,10 +50,11 @@ namespace Oxide.Plugins
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
-                maxProgramInstructions = 128,
+                maxProgramInstructions = 512,
                 gridPositionCorrection = new Vector3(1, 0, 75),
-                maxInstructionsPerFixedUpdate = 32,
-                gridSize = 146.33f
+                maxInstructionsPerCycle = 32,
+                gridSize = 146.33f,
+                droneCPUFreq = 10
             };
 
             Config.WriteObject(config, true);
@@ -59,28 +63,25 @@ namespace Oxide.Plugins
         void Init() {
             config = Config.ReadObject<ConfigData>();
             plugin = this;
+            compiler = new Compiler();
+            AddCovalenceCommand("minicopterdrone.calibrate", nameof(Calibrate), calibratePerm);
         }
 
-        [ConsoleCommand("minicopterdrone.calibrate")]
-        void Calibrate(ConsoleSystem.Arg argument) {
-            if(!argument.Player()) {
-                argument.ReplyWith(lang.GetMessage("must_run_as_player", this));
-                return;
-            }
-
-            if(!permission.UserHasPermission(argument.Player().UserIDString, calibratePerm)) {
-                argument.ReplyWith(lang.GetMessage("need_calibrate_perm", this, argument.Player().UserIDString));
+        void Calibrate(IPlayer player, string command, string[] args) {
+            if(player.Object == null) {
+                Puts(lang.GetMessage("must_run_as_player", this));
                 return;
             }
 
             Vector3 pos;
-            if(TryMapGridToPosition(argument.Args[0], out pos, false)) {
-                var actualPos = argument.Player().transform.position;
+            if(args.Length == 1 && TryMapGridToPosition(args[0], out pos, false)) {
+                var basePlayer = player.Object as BasePlayer;
+                var actualPos = basePlayer.transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
                 Config.WriteObject(config, true);
-                argument.ReplyWith(lang.GetMessage("grid_pos_corr_saved", this, argument.Player().UserIDString));
+                player.Reply(lang.GetMessage("grid_pos_corr_saved", this, player.Id));
             } else {
-                argument.ReplyWith(lang.GetMessage("calibrate_invalid_arg", this, argument.Player().UserIDString));
+                player.Reply(lang.GetMessage("calibrate_invalid_arg", this, player.Id));
             }
         }
 
@@ -98,8 +99,16 @@ namespace Oxide.Plugins
             List<int> removeActiveList = new List<int>();
             List<int> removeDroneList = new List<int>();
 
-            void FixedUpdate() {
-                var startTime = Time.realtimeSinceStartup;
+            public void Init() {
+                float period = 1.0f / config.droneCPUFreq;
+                InvokeRepeating(nameof(CycleDroneCPUs), period, period);
+            }
+
+            void CycleDroneCPUs() {
+                if(drones.Count == 0) {
+                    return;
+                }
+
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
                 removeActiveList.Clear();
@@ -141,7 +150,7 @@ namespace Oxide.Plugins
                     }
 
                     if(drone.active) {
-                        drone.FixedUpdate();
+                        drone.CycleCPU();
                     }
                 }
 
@@ -150,17 +159,31 @@ namespace Oxide.Plugins
                 }
             }
 
+            void FixedUpdate() {
+                foreach(var value in drones) {
+                    var drone = value.Value;
+                    
+                    if(!drone.miniCopterRef.Get(true)) {
+                        continue;
+                    }
+
+                    if(drone.active) {
+                        drone.FixedUpdate();
+                    }
+                }
+            }
+
             public Drone AddDrone(MiniCopter miniCopter, StorageContainer storage) {
                 var drone = new Drone();
                 drone.miniCopterRef.Set(miniCopter);
-                drone.instanceId = miniCopter.GetInstanceID();
+                drone.instanceId = miniCopter.net.ID;
                 drone.storage = storage;
                 drone.manager = this;
                 drones.Add(miniCopter.GetInstanceID(), drone);
                 return drone;
             }
 
-            public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
+            public void OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
                 Drone drone = null;
 
                 if(!drones.TryGetValue(miniCopter.GetInstanceID(), out drone)){
@@ -168,8 +191,6 @@ namespace Oxide.Plugins
                 }
 
                 drone.OnItemAddedOrRemoved(storage, item, added);
-
-                return true;
             }
 
             void Reset() {
@@ -513,7 +534,7 @@ namespace Oxide.Plugins
         class Drone {
             public DroneManager manager;
             public EntityRef miniCopterRef;
-            public int instanceId;
+            public uint instanceId;
             public DroneCPU cpu = new DroneCPU();
             public StorageContainer storage = null;
 
@@ -615,7 +636,7 @@ namespace Oxide.Plugins
                 return position.y - GetTerrainHeight(position);
             }
 
-            public bool OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
+            public void OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
                 if(item.info.shortname == "note" && item.text != null) {
                     var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n", ";"}, StringSplitOptions.RemoveEmptyEntries);
 
@@ -641,8 +662,6 @@ namespace Oxide.Plugins
                         }
                     }
                 }
-
-                return true;
             }
 
             void ControlAltitude(float desiredAltitude, float currentAltitude) {
@@ -692,10 +711,6 @@ namespace Oxide.Plugins
             void StartEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
 
-                if(!copter) {
-                    return;
-                }
-
                 if(!HasFlag(Flag.EngineOn) && !HasFlag(Flag.EngineStarting) && !copter.Waterlogged()) {
                     engineStartTime = Time.fixedTime;
                     SetFlag(Flag.EngineStarting, true);
@@ -706,10 +721,6 @@ namespace Oxide.Plugins
             void StopEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
 
-                if(!copter) {
-                    return;
-                }
-
                 SetFlag(Flag.EngineOn, false);
                 SetFlag(Flag.EngineStarting, false);
                 copter.EngineOff();
@@ -717,10 +728,6 @@ namespace Oxide.Plugins
 
             void UpdateEngine() {
                 var copter = miniCopterRef.Get(true) as MiniCopter;
-
-                if(!copter) {
-                    return;
-                }
 
                 if(!copter.HasFuel()) {
                     StopEngine();
@@ -828,9 +835,17 @@ namespace Oxide.Plugins
                 }
 
                 Fly();
+            }
+
+            public void CycleCPU() {
+                MiniCopter copter = miniCopterRef.Get(true) as MiniCopter;
+
+                if(!copter) {
+                    Reset();
+                    return;
+                }
 
                 var currentAltitude = GetAltitude(copter.transform.position);
-                var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
 
                 foreach(var freq in DroneManager.risingEdgeFrequencies) {
                     string isrName = "rfa" + freq;
@@ -924,7 +939,7 @@ namespace Oxide.Plugins
 
                 int numInstructionsExecuted = 0;
                 string failReason;
-                while(numInstructionsExecuted < config.maxInstructionsPerFixedUpdate && !HasFlag(Flag.ExecutingInstruction)) {
+                while(numInstructionsExecuted < config.maxInstructionsPerCycle && !HasFlag(Flag.ExecutingInstruction)) {
                     // these need to stay synced
                     this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
 
@@ -1506,9 +1521,7 @@ namespace Oxide.Plugins
                             return false;
                         }
 
-                        if(matchNumVar.Success) {
-                            addArgument(i, 0, 0, arg, ParamType.NumVariable);
-                        } else if(match.Success) {
+                        if(match.Success) {
                             if(match.Groups[0].ToString() == ".") {
                                 fail(arg);
                                 return false;
@@ -1538,6 +1551,8 @@ namespace Oxide.Plugins
                             var value = lettersWhole + lettersFraction;
                             
                             addArgument(i, value, (int)value, arg, param.type);
+                        } else if(matchNumVar.Success) {
+                            addArgument(i, 0, 0, arg, ParamType.NumVariable);
                         }
                     }
 
@@ -1614,11 +1629,15 @@ namespace Oxide.Plugins
 
             if(existingStorage == null) {
                 var ent = GameManager.server.CreateEntity("assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab");
+
+                var collider = ent.GetComponent<Collider>();
+                
+                if(collider) {
+                    GameObject.Destroy(collider);
+                }
             
                 ent.name = "minicopterdrone.storage";
                 ent.Spawn();
-                ent.transform.position = miniCopter.transform.position;
-                ent.transform.rotation = Quaternion.identity;
                 ent.transform.localPosition = new Vector3(0, 0.2f, -1.2f);
                 ent.transform.localRotation = Quaternion.identity;
                 ent.SetParent(miniCopter, false, false);
@@ -1636,10 +1655,10 @@ namespace Oxide.Plugins
             return storage;
         }
 
-        void Loaded() {
-            permission.RegisterPermission(calibratePerm, this);
+        void OnServerInitialized() {
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
+            droneManager.Init();
 
             foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
                 StorageContainer storage = null;
@@ -1667,6 +1686,10 @@ namespace Oxide.Plugins
             if(droneManager) {
                 GameObject.Destroy(droneManager);
             }
+
+            plugin = null;
+            config = null;
+            compiler = null;
         }
 
         static class PIDController {
