@@ -7,7 +7,9 @@
 
 `"gridSize"`: The length of a map grid square in units of game coordinates, you shouldn't need to change this.
 
-`"maxInstructionsPerFixedUpdate"`: The maximum number of instructions a drone can execute per FixedUpdate().
+`"maxInstructionsPerCycle"`: The maximum number of instructions a drone can execute per virtual CPU cycle.
+
+`"droneCPUFreq"`: The drone's virtual CPU frequency in Hz.
 
 `"maxProgramInstructions"`: The maximum number of instructions in a drone program
 
