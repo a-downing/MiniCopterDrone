@@ -1642,11 +1642,15 @@ namespace Oxide.Plugins
 
             if(existingStorage == null) {
                 var ent = GameManager.server.CreateEntity("assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab");
+
+                var collider = ent.GetComponent<Collider>();
+                
+                if(collider) {
+                    GameObject.Destroy(collider);
+                }
             
                 ent.name = "minicopterdrone.storage";
                 ent.Spawn();
-                ent.transform.position = miniCopter.transform.position;
-                ent.transform.rotation = Quaternion.identity;
                 ent.transform.localPosition = new Vector3(0, 0.2f, -1.2f);
                 ent.transform.localRotation = Quaternion.identity;
                 ent.SetParent(miniCopter, false, false);
