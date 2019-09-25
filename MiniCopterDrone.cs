@@ -2,6 +2,7 @@ using System;
 using Oxide.Core;
 using Oxide.Core.Configuration;
 using Oxide.Core.Plugins;
+using Oxide.Core.Libraries.Covalence;
 using System.Linq;
 using System.Collections.Generic;
 using Newtonsoft.Json;
@@ -61,26 +62,27 @@ namespace Oxide.Plugins
             plugin = this;
         }
 
-        [ConsoleCommand("minicopterdrone.calibrate")]
-        void Calibrate(ConsoleSystem.Arg argument) {
-            if(!argument.Player()) {
-                argument.ReplyWith(lang.GetMessage("must_run_as_player", this));
+        [Command("calibrate")]
+        void Calibrate(IPlayer player, string command, string[] args) {
+            if(player.Object == null) {
+                Puts(lang.GetMessage("must_run_as_player", this));
                 return;
             }
 
-            if(!permission.UserHasPermission(argument.Player().UserIDString, calibratePerm)) {
-                argument.ReplyWith(lang.GetMessage("need_calibrate_perm", this, argument.Player().UserIDString));
+            if(!permission.UserHasPermission(player.Id, calibratePerm)) {
+                player.Reply(lang.GetMessage("need_calibrate_perm", this, player.Id));
                 return;
             }
 
             Vector3 pos;
-            if(TryMapGridToPosition(argument.Args[0], out pos, false)) {
-                var actualPos = argument.Player().transform.position;
+            if(TryMapGridToPosition(args[0], out pos, false)) {
+                var basePlayer = player.Object as BasePlayer;
+                var actualPos = basePlayer.transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
                 Config.WriteObject(config, true);
-                argument.ReplyWith(lang.GetMessage("grid_pos_corr_saved", this, argument.Player().UserIDString));
+                player.Reply(lang.GetMessage("grid_pos_corr_saved", this, player.Id));
             } else {
-                argument.ReplyWith(lang.GetMessage("calibrate_invalid_arg", this, argument.Player().UserIDString));
+                player.Reply(lang.GetMessage("calibrate_invalid_arg", this, player.Id));
             }
         }
 
@@ -99,7 +101,6 @@ namespace Oxide.Plugins
             List<int> removeDroneList = new List<int>();
 
             void FixedUpdate() {
-                var startTime = Time.realtimeSinceStartup;
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
                 removeActiveList.Clear();
@@ -1667,6 +1668,10 @@ namespace Oxide.Plugins
             if(droneManager) {
                 GameObject.Destroy(droneManager);
             }
+
+            plugin = null;
+            config = null;
+            compiler = null;
         }
 
         static class PIDController {
