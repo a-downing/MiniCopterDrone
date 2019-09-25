@@ -858,7 +858,6 @@ namespace Oxide.Plugins
                 }
 
                 var currentAltitude = GetAltitude(copter.transform.position);
-                //var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
 
                 foreach(var freq in DroneManager.risingEdgeFrequencies) {
                     string isrName = "rfa" + freq;
