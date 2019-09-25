@@ -1534,9 +1534,7 @@ namespace Oxide.Plugins
                             return false;
                         }
 
-                        if(matchNumVar.Success) {
-                            addArgument(i, 0, 0, arg, ParamType.NumVariable);
-                        } else if(match.Success) {
+                        if(match.Success) {
                             if(match.Groups[0].ToString() == ".") {
                                 fail(arg);
                                 return false;
@@ -1566,6 +1564,8 @@ namespace Oxide.Plugins
                             var value = lettersWhole + lettersFraction;
                             
                             addArgument(i, value, (int)value, arg, param.type);
+                        } else if(matchNumVar.Success) {
+                            addArgument(i, 0, 0, arg, ParamType.NumVariable);
                         }
                     }
 

@@ -39,7 +39,7 @@ stop the engine
 
 `target <map_col> <map_row> <altitude_in_meters>`
 
-targets a point of the map. For example to target the center of grid A0 50 meters above the terrain: `target A.5 0.5 50`
+targets a point of the map. For example to target the center of grid A0 50 meters above the terrain: `target A.5 0.5 50`. Note, the `<map_col>` argument must have a decimal point, e.g. `A.0` or `A.`, or it will be interpreted as a variable.
 
 `sleep <seconds>`
 
