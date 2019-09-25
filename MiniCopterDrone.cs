@@ -57,25 +57,24 @@ namespace Oxide.Plugins
             Config.WriteObject(config, true);
         }
 
+        void OnServerInitialized() {
+            Puts("OnServerInitialized");
+        }
+
         void Init() {
             config = Config.ReadObject<ConfigData>();
             plugin = this;
+            AddCovalenceCommand("minicopterdrone.calibrate", nameof(Calibrate), calibratePerm);
         }
 
-        [Command("calibrate")]
         void Calibrate(IPlayer player, string command, string[] args) {
             if(player.Object == null) {
                 Puts(lang.GetMessage("must_run_as_player", this));
                 return;
             }
 
-            if(!permission.UserHasPermission(player.Id, calibratePerm)) {
-                player.Reply(lang.GetMessage("need_calibrate_perm", this, player.Id));
-                return;
-            }
-
             Vector3 pos;
-            if(TryMapGridToPosition(args[0], out pos, false)) {
+            if(args.Length == 1 && TryMapGridToPosition(args[0], out pos, false)) {
                 var basePlayer = player.Object as BasePlayer;
                 var actualPos = basePlayer.transform.position;
                 config.gridPositionCorrection = new Vector3(actualPos.x, 0, actualPos.z) - pos;
@@ -1638,7 +1637,6 @@ namespace Oxide.Plugins
         }
 
         void Loaded() {
-            permission.RegisterPermission(calibratePerm, this);
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
 
