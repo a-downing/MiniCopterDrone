@@ -16,7 +16,7 @@ namespace Oxide.Plugins
         static MiniCopterDrone plugin = null;
         DroneManager droneManager = null;
         static ConfigData config;
-        static Compiler compiler = new Compiler();
+        static Compiler compiler = null;
         const string calibratePerm = "minicopterdrone.calibrate.allowed";
 
         class ConfigData {
@@ -24,16 +24,18 @@ namespace Oxide.Plugins
             public int maxProgramInstructions;
             [JsonProperty(PropertyName = "gridPositionCorrection")]
             public Vector3 gridPositionCorrection;
-            [JsonProperty(PropertyName = "maxInstructionsPerFixedUpdate")]
-            public int maxInstructionsPerFixedUpdate;
+            [JsonProperty(PropertyName = "maxInstructionsPerCycle")]
+            public int maxInstructionsPerCycle;
             [JsonProperty(PropertyName = "gridSize")]
             public float gridSize;
+            [JsonProperty(PropertyName = "droneCPUFreq")]
+            public float droneCPUFreq;
         }
 
         protected override void LoadDefaultMessages() {
             lang.RegisterMessages(new Dictionary<string, string> {
                 ["must_run_as_player"] = "this command must be run as a player",
-                ["need_calibrate_perm"] = "error: you need the {0} permission to use this command",
+                //["need_calibrate_perm"] = "error: you need the {0} permission to use this command",
                 ["grid_pos_corr_saved"] = "grid position correction saved",
                 ["calibrate_invalid_arg"] = "invalid argument format <grid_col><grid_row> ex: J13",
                 ["var_already_declared"] = "line {0}: variable already declared ({1})",
@@ -48,17 +50,14 @@ namespace Oxide.Plugins
 
         protected override void LoadDefaultConfig() {
             var config = new ConfigData {
-                maxProgramInstructions = 128,
+                maxProgramInstructions = 512,
                 gridPositionCorrection = new Vector3(1, 0, 75),
-                maxInstructionsPerFixedUpdate = 32,
-                gridSize = 146.33f
+                maxInstructionsPerCycle = 32,
+                gridSize = 146.33f,
+                droneCPUFreq = 10
             };
 
             Config.WriteObject(config, true);
-        }
-
-        void OnServerInitialized() {
-            Puts("OnServerInitialized");
         }
 
         void Init() {
@@ -99,7 +98,16 @@ namespace Oxide.Plugins
             List<int> removeActiveList = new List<int>();
             List<int> removeDroneList = new List<int>();
 
-            void FixedUpdate() {
+            public void Init() {
+                float period = 1.0f / config.droneCPUFreq;
+                InvokeRepeating(nameof(CycleDroneCPUs), period, period);
+            }
+
+            void CycleDroneCPUs() {
+                if(drones.Count == 0) {
+                    return;
+                }
+
                 risingEdgeFrequencies.Clear();
                 fallingEdgeFrequencies.Clear();
                 removeActiveList.Clear();
@@ -141,12 +149,26 @@ namespace Oxide.Plugins
                     }
 
                     if(drone.active) {
-                        drone.FixedUpdate();
+                        drone.CycleCPU();
                     }
                 }
 
                 foreach(var id in removeDroneList) {
                     drones.Remove(id);
+                }
+            }
+
+            void FixedUpdate() {
+                foreach(var value in drones) {
+                    var drone = value.Value;
+                    
+                    if(!drone.miniCopterRef.Get(true)) {
+                        continue;
+                    }
+
+                    if(drone.active) {
+                        drone.FixedUpdate();
+                    }
                 }
             }
 
@@ -160,7 +182,7 @@ namespace Oxide.Plugins
                 return drone;
             }
 
-            public bool OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
+            public void OnItemAddedOrRemoved(MiniCopter miniCopter, StorageContainer storage, Item item, bool added) {
                 Drone drone = null;
 
                 if(!drones.TryGetValue(miniCopter.GetInstanceID(), out drone)){
@@ -168,8 +190,6 @@ namespace Oxide.Plugins
                 }
 
                 drone.OnItemAddedOrRemoved(storage, item, added);
-
-                return true;
             }
 
             void Reset() {
@@ -615,7 +635,7 @@ namespace Oxide.Plugins
                 return position.y - GetTerrainHeight(position);
             }
 
-            public bool OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
+            public void OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
                 if(item.info.shortname == "note" && item.text != null) {
                     var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n", ";"}, StringSplitOptions.RemoveEmptyEntries);
 
@@ -641,8 +661,6 @@ namespace Oxide.Plugins
                         }
                     }
                 }
-
-                return true;
             }
 
             void ControlAltitude(float desiredAltitude, float currentAltitude) {
@@ -828,9 +846,18 @@ namespace Oxide.Plugins
                 }
 
                 Fly();
+            }
+
+            public void CycleCPU() {
+                MiniCopter copter = miniCopterRef.Get(true) as MiniCopter;
+
+                if(!copter) {
+                    Reset();
+                    return;
+                }
 
                 var currentAltitude = GetAltitude(copter.transform.position);
-                var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
+                //var currentPositionTerrainHeight = GetTerrainHeight(copter.transform.position);
 
                 foreach(var freq in DroneManager.risingEdgeFrequencies) {
                     string isrName = "rfa" + freq;
@@ -924,7 +951,7 @@ namespace Oxide.Plugins
 
                 int numInstructionsExecuted = 0;
                 string failReason;
-                while(numInstructionsExecuted < config.maxInstructionsPerFixedUpdate && !HasFlag(Flag.ExecutingInstruction)) {
+                while(numInstructionsExecuted < config.maxInstructionsPerCycle && !HasFlag(Flag.ExecutingInstruction)) {
                     // these need to stay synced
                     this.target.y = this.desiredAltitude + GetTerrainHeight(this.target);
 
@@ -1636,9 +1663,10 @@ namespace Oxide.Plugins
             return storage;
         }
 
-        void Loaded() {
+        void OnServerInitialized() {
             var go = new GameObject(DroneManager.Guid);
             droneManager = go.AddComponent<DroneManager>();
+            droneManager.Init();
 
             foreach(var miniCopter in GameObject.FindObjectsOfType<MiniCopter>()) {
                 StorageContainer storage = null;
