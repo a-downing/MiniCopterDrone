@@ -11,7 +11,7 @@ using UnityEngine;
 
 namespace Oxide.Plugins
 {
-    [Info("Minicopter Drone", "Andrew", "1.2.1")]
+    [Info("Minicopter Drone", "Andrew", "1.2.2")]
     [Description("Turns the minicopter into a programmable drone")]
     public class MiniCopterDrone : RustPlugin {
         static MiniCopterDrone plugin = null;
