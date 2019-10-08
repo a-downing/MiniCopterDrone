@@ -18,6 +18,7 @@ namespace Oxide.Plugins
         static ConfigData config;
         static Compiler compiler = null;
         const string calibratePerm = "minicopterdrone.calibrate.allowed";
+        const int maxAvgCharsPerLine = 32;
 
         class ConfigData {
             [JsonProperty(PropertyName = "maxProgramInstructions")]
@@ -45,6 +46,10 @@ namespace Oxide.Plugins
                 ["invalid_arg"] = "line {0}: invalid argument ({1}) for ({2}) spec: {2} {3}",
                 ["invalid_instruction"] = "line {0}: invalid instruction ({1})",
                 ["wrong_num_args"] = "line {0}: wrong number of arguments for ({1}) spec: {1} {2}",
+                ["over_char_limit"] = "max program length is {0} characters",
+                ["over_instruction_limit"] = "max program length is {0} instructions",
+                ["compiler_error"] = "[error] {0}",
+                ["no_prefab"] = "Error creating prefab \"{0}\""
             }, this);
         }
 
@@ -637,7 +642,18 @@ namespace Oxide.Plugins
             }
 
             public void OnItemAddedOrRemoved(StorageContainer storage, Item item, bool added) {
+                string message;
+
                 if(item.info.shortname == "note" && item.text != null) {
+                    var maxProgramCharLength = config.maxProgramInstructions * maxAvgCharsPerLine;
+
+                    if(item.text.Length > maxProgramCharLength) {
+                        message = string.Format(plugin.lang.GetMessage("over_char_limit", plugin), maxProgramCharLength);
+                        message = string.Format(plugin.lang.GetMessage("compiler_error", plugin), message);
+                        item.text += "\n" + message;
+                        return;
+                    }
+
                     var lines = item.text.ToLower().Split(new[] {"\r\n", "\r", "\n", ";"}, StringSplitOptions.RemoveEmptyEntries);
 
                     if(lines.Length >= 1) {
@@ -648,13 +664,17 @@ namespace Oxide.Plugins
                                     bool success = compiler.Compile(item.text);
 
                                     if(!success) { 
-                                        item.text += "\n" + String.Join("\n", compiler.errors.Select(x => "#[error] " + x));
+                                        item.text += "\n" + String.Join("\n", compiler.errors.Select(x => {
+                                            return string.Format(plugin.lang.GetMessage("compiler_error", plugin), x);
+                                        }));
                                     } else {
                                         cpu.LoadInstructions(compiler.instructions);
                                         active = true;
                                     }
                                 } else {
-                                    item.text += "\n" + $"#[error] max program length is {config.maxProgramInstructions} instructions";
+                                    message = string.Format(plugin.lang.GetMessage("over_instruction_limit", plugin), config.maxProgramInstructions);
+                                    message = string.Format(plugin.lang.GetMessage("compiler_error", plugin), message);
+                                    item.text += "\n" + message;
                                 }
                             } else {
                                 Reset();
@@ -1626,9 +1646,15 @@ namespace Oxide.Plugins
 
         StorageContainer ProcessMiniCopter(MiniCopter miniCopter, StorageContainer existingStorage) {
             StorageContainer storage;
+            string prefabStr = "assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab";
 
             if(existingStorage == null) {
-                var ent = GameManager.server.CreateEntity("assets/prefabs/deployable/woodenbox/woodbox_deployed.prefab");
+                var ent = GameManager.server.CreateEntity(prefabStr);
+
+                if(!ent) {
+                    Puts(String.Format(lang.GetMessage("no_prefab", plugin), prefabStr));
+                    return null;
+                }
 
                 var collider = ent.GetComponent<Collider>();
                 
